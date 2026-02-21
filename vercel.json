@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/api/playlist/route.js": { "maxDuration": 60 },
+    "app/api/download/route.js": { "maxDuration": 300 }
+  },
+  "buildCommand": "node scripts/download-ytdlp.js && next build"
+}

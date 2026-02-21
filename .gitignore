@@ -10,6 +10,11 @@
 !.yarn/releases
 !.yarn/versions
 
+# Keep the downloaded yt-dlp standalone binary — needed for Vercel deployment
+!bin/yt-dlp
+!bin/yt-dlp.exe
+!bin/yt-dlp_macos
+
 # testing
 /coverage
 
