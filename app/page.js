@@ -1,199 +1,104 @@
+// 📁 app/page.jsx
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import {
-  Music,
-  Video,
-  Download,
-  CheckSquare,
-  Square,
-  Clock,
-  List,
-  ChevronDown,
-  Search,
-  Loader2,
-  AlertCircle,
-  Play,
-  BarChart2,
-  X,
-  ExternalLink,
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Download, Search, Loader2, AlertCircle, Moon, Sun,
+  ExternalLink, Clock, List, BarChart2, Music, Video,
+  CheckCircle2, AlertTriangle, RefreshCw, ArrowUpDown, X,
+  FlaskConical,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
-// ─── Quality Options ─────────────────────────────────────────────────────────
+// ── Theme ─────────────────────────────────────────────────────────────────────
+function useTheme() {
+  const [dark, setDark] = useState(true);
+  useEffect(() => {
+    const stored = localStorage.getItem("theme");
+    const sys = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setDark(stored ? stored === "dark" : sys);
+  }, []);
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    localStorage.setItem("theme", dark ? "dark" : "light");
+  }, [dark]);
+  return [dark, setDark];
+}
 
+// ── Constants ─────────────────────────────────────────────────────────────────
 const MP4_QUALITIES = [
   { label: "Best Available", value: "highest" },
-  { label: "1080p", value: "1080p" },
-  { label: "720p", value: "720p" },
-  { label: "480p", value: "480p" },
-  { label: "360p", value: "360p" },
-  { label: "Lowest", value: "lowest" },
+  { label: "1080p",          value: "1080p"   },
+  { label: "720p",           value: "720p"    },
+  { label: "480p",           value: "480p"    },
+  { label: "360p",           value: "360p"    },
+  { label: "Lowest",         value: "lowest"  },
 ];
-
 const MP3_QUALITIES = [
-  { label: "Small file (360p video)", value: "low" },
-  { label: "Medium file (480p video)", value: "medium" },
-  { label: "Large file (720p video)", value: "highest" },
+  { label: "320 kbps (Best)",   value: "highest" },
+  { label: "192 kbps (Medium)", value: "medium"  },
+  { label: "128 kbps (Low)",    value: "low"     },
+];
+const SORT_OPTIONS = [
+  { label: "Playlist order",    value: "default"   },
+  { label: "Selected first",    value: "selected"  },
+  { label: "Latest first",      value: "latest"    },
+  { label: "Oldest first",      value: "oldest"    },
+  { label: "Most viewed",       value: "views"     },
+  { label: "Shortest first",    value: "shortest"  },
+  { label: "Longest first",     value: "longest"   },
 ];
 
-// ─── Small Components ─────────────────────────────────────────────────────────
-
-function Badge({ children, className }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono tracking-wide",
-        className
-      )}
-    >
-      {children}
-    </span>
-  );
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function sortVideos(videos, sortBy, selected) {
+  if (!videos) return [];
+  const arr = [...videos];
+  switch (sortBy) {
+    case "selected":
+      return arr.sort((a, b) => {
+        const aS = selected.has(a.videoId) ? 0 : 1;
+        const bS = selected.has(b.videoId) ? 0 : 1;
+        return aS - bS || a.index - b.index;
+      });
+    case "latest":   return arr.sort((a, b) => b.uploadDate.localeCompare(a.uploadDate));
+    case "oldest":   return arr.sort((a, b) => a.uploadDate.localeCompare(b.uploadDate));
+    case "views":    return arr.sort((a, b) => b.viewCount - a.viewCount);
+    case "shortest": return arr.sort((a, b) => a.durationSeconds - b.durationSeconds);
+    case "longest":  return arr.sort((a, b) => b.durationSeconds - a.durationSeconds);
+    default:         return arr;
+  }
 }
 
-function StatusDot({ status }) {
-  return (
-    <span
-      className={cn("inline-block w-1.5 h-1.5 rounded-full", {
-        "bg-zinc-600": status === "idle",
-        "bg-blue-400 animate-pulse": status === "downloading",
-        "bg-green-400": status === "done",
-        "bg-red-400": status === "error",
-      })}
-    />
-  );
+function formatViews(n) {
+  if (!n) return null;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M views`;
+  if (n >= 1_000)     return `${Math.round(n / 1_000)}K views`;
+  return `${n} views`;
 }
 
-function Select({ options, value, onChange, className }) {
-  return (
-    <div className={cn("relative", className)}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full appearance-none bg-zinc-900 border border-zinc-800 rounded px-3 py-2 pr-8 text-sm font-mono text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
-    </div>
-  );
-}
-
-function ProgressBar({ value, className }) {
-  return (
-    <div className={cn("h-[2px] bg-zinc-800 rounded-full overflow-hidden", className)}>
-      <div
-        className="h-full bg-[hsl(var(--accent))] transition-all duration-300 ease-out"
-        style={{ width: `${value}%` }}
-      />
-    </div>
-  );
-}
-
-function VideoRow({ video, selected, onToggle, download }) {
-  const status = download?.status || "idle";
-
-  return (
-    <div
-      className={cn(
-        "group flex items-center gap-3 px-4 py-3 border-b border-zinc-900 transition-colors cursor-pointer",
-        selected ? "bg-zinc-900/60" : "hover:bg-zinc-900/30"
-      )}
-      onClick={onToggle}
-    >
-      <div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
-        {selected ? (
-          <div className="w-4 h-4 rounded border border-[hsl(var(--accent))] bg-[hsl(var(--accent))] flex items-center justify-center">
-            <svg viewBox="0 0 10 8" className="w-2.5 h-2 fill-black">
-              <path
-                d="M1 4l3 3 5-6"
-                stroke="black"
-                strokeWidth="1.5"
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-        ) : (
-          <div className="w-4 h-4 rounded border border-zinc-700 group-hover:border-zinc-500 transition-colors" />
-        )}
-      </div>
-
-      <span className="flex-shrink-0 w-6 text-xs font-mono text-zinc-600 text-right">
-        {video.index}
-      </span>
-
-      <div className="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-zinc-900 relative">
-        <img
-          src={video.thumbnail}
-          alt=""
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            e.target.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32"><rect fill="%23111" width="48" height="32"/></svg>`;
-          }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
-          <Play className="w-3 h-3 text-white fill-white" />
-        </div>
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-zinc-200 truncate leading-tight">{video.title}</p>
-        <p className="text-xs text-zinc-600 mt-0.5 truncate">{video.author}</p>
-        {download && status !== "idle" && (
-          <div className="mt-1.5">
-            {status === "downloading" && <ProgressBar value={download.progress} />}
-            {status === "error" && (
-              <p className="text-xs text-red-400 font-mono truncate">{download.error}</p>
-            )}
-          </div>
-        )}
-      </div>
-
-      <span className="flex-shrink-0 text-xs font-mono text-zinc-500">
-        {video.duration}
-      </span>
-
-      <div
-        className="flex-shrink-0 flex items-center gap-1.5"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <StatusDot status={status} />
-        {status === "done" && (
-          <span className="text-xs font-mono text-green-400">Done</span>
-        )}
-        {status === "error" && (
-          <span className="text-xs font-mono text-red-400">Error</span>
-        )}
-        {status === "downloading" && (
-          <span className="text-xs font-mono text-zinc-500">{download?.progress}%</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value }) {
-  return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-zinc-500">
-        <Icon className="w-3.5 h-3.5" />
-        <span className="text-xs font-mono tracking-widest uppercase">{label}</span>
-      </div>
-      <span className="text-xl font-mono text-zinc-100 tracking-tight">{value}</span>
-    </div>
-  );
-}
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function Home() {
+  const [dark, setDark] = useTheme();
+
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -201,13 +106,14 @@ export default function Home() {
 
   const [format, setFormat] = useState("mp4");
   const [quality, setQuality] = useState("highest");
+  const [sortBy, setSortBy] = useState("default");
+  const [filter, setFilter] = useState("");
 
   const [selected, setSelected] = useState(new Set());
   const [downloads, setDownloads] = useState(new Map());
   const [bulkDownloading, setBulkDownloading] = useState(false);
 
-  const [filter, setFilter] = useState("");
-
+  // ── Fetch ───────────────────────────────────────────────────────────────────
   const fetchPlaylist = useCallback(async () => {
     if (!url.trim()) return;
     setLoading(true);
@@ -215,7 +121,8 @@ export default function Home() {
     setPlaylist(null);
     setSelected(new Set());
     setDownloads(new Map());
-
+    setSortBy("default");
+    setFilter("");
     try {
       const res = await fetch(`/api/playlist?url=${encodeURIComponent(url.trim())}`);
       const data = await res.json();
@@ -229,387 +136,561 @@ export default function Home() {
     }
   }, [url]);
 
-  const toggleVideo = (videoId) => {
+  // ── Selection ───────────────────────────────────────────────────────────────
+  const toggleVideo = (id) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(videoId)) next.delete(videoId);
-      else next.add(videoId);
+      next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
 
   const toggleAll = () => {
     if (!playlist) return;
-    if (selected.size === playlist.videos.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(playlist.videos.map((v) => v.videoId)));
-    }
+    setSelected(
+      selected.size === playlist.videos.length
+        ? new Set()
+        : new Set(playlist.videos.map((v) => v.videoId))
+    );
   };
 
+  // ── Download single ─────────────────────────────────────────────────────────
   const downloadVideo = async (videoId, title) => {
-    setDownloads((prev) => {
-      const next = new Map(prev);
-      next.set(videoId, { videoId, status: "downloading", progress: 5 });
-      return next;
-    });
+    // Find the video's duration so we can scale progress speed
+    const videoMeta = playlist?.videos.find((v) => v.videoId === videoId);
+    const durationSeconds = videoMeta?.durationSeconds || 300;
+
+    setDownloads((prev) =>
+      new Map(prev).set(videoId, { status: "downloading", phase: "processing", progress: 0 })
+    );
+
+    // Fake progress during server-side processing (yt-dlp download + ffmpeg convert).
+    // Step multiplier is scaled by duration so short and long videos both feel proportional:
+    //   300s (5 min) → k = 0.04  (baseline)
+    //   60s  (1 min) → k = 0.20  (faster, short job)
+    //   3600s (1 hr) → k = 0.003 (much slower, long job)
+    const k = Math.min(0.20, Math.max(0.003, 0.04 * (300 / durationSeconds)));
+
+    let fakeProgress = 0;
+    const fakeInterval = setInterval(() => {
+      const remaining = 85 - fakeProgress;
+      const step = Math.max(0.1, remaining * k);
+      fakeProgress = Math.min(85, fakeProgress + step);
+      setDownloads((prev) => {
+        const next = new Map(prev);
+        const curr = next.get(videoId);
+        // Only update if still in processing phase
+        if (curr?.phase === "processing") {
+          next.set(videoId, { ...curr, progress: Math.round(fakeProgress) });
+        }
+        return next;
+      });
+    }, 400);
 
     try {
-      // Server proxies the stream — no CORS, no decipher issues
-      const response = await fetch(
+      const res = await fetch(
         `/api/download?videoId=${videoId}&format=${format}&quality=${quality}`
       );
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: "Download failed" }));
-        throw new Error(err.error || "Download failed");
+      // Server responded — stop fake progress, keep current value as starting point
+      clearInterval(fakeInterval);
+
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ error: "Download failed" }));
+        throw new Error(e.error || "Download failed");
       }
 
-      const contentLength = response.headers.get("content-length");
+      const contentLength = res.headers.get("content-length");
       const total = contentLength ? parseInt(contentLength) : 0;
-      const reader = response.body?.getReader();
+      const reader = res.body?.getReader();
       if (!reader) throw new Error("No readable stream");
 
       const chunks = [];
       let received = 0;
+
+      // Get current fake progress as floor so bar never goes backwards
+      const startProgress = Math.round(fakeProgress);
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
         received += value.length;
-        const progress = total
-          ? Math.min(Math.round((received / total) * 95) + 5, 95)
-          : Math.min(received / 500000 + 5, 90); // fallback if no content-length
+
+        // Map real bytes received onto the remaining range [startProgress → 99]
+        const streamProgress = total
+          ? Math.min(Math.round((received / total) * (99 - startProgress) + startProgress), 99)
+          : Math.min(startProgress + Math.round(received / 80000), 99);
+
         setDownloads((prev) => {
           const next = new Map(prev);
           const curr = next.get(videoId);
-          if (curr) next.set(videoId, { ...curr, progress });
+          if (curr) next.set(videoId, { ...curr, phase: "streaming", progress: streamProgress });
           return next;
         });
       }
 
-      const mimeType = format === "mp3" ? "audio/webm" : "video/mp4";
-      const ext = format === "mp3" ? "webm" : "mp4";
+      // Trigger browser save
+      const mimeType = format === "mp3" ? "audio/mpeg" : "video/mp4";
+      const ext = format === "mp3" ? "mp3" : "mp4";
       const blob = new Blob(chunks, { type: mimeType });
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
-      const safeName = title
-        .replace(/[^\w\s\-]/g, "")
-        .trim()
-        .replace(/\s+/g, "_");
-      a.download = `${safeName}.${ext}`;
+      a.download = `${title.replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_")}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(objectUrl);
 
-      setDownloads((prev) => {
-        const next = new Map(prev);
-        next.set(videoId, { videoId, status: "done", progress: 100 });
-        return next;
-      });
+      setDownloads((prev) =>
+        new Map(prev).set(videoId, { status: "done", phase: "done", progress: 100 })
+      );
     } catch (err) {
-      setDownloads((prev) => {
-        const next = new Map(prev);
-        next.set(videoId, {
-          videoId,
-          status: "error",
-          progress: 0,
-          error: err.message,
-        });
-        return next;
-      });
+      clearInterval(fakeInterval);
+      setDownloads((prev) =>
+        new Map(prev).set(videoId, { status: "error", phase: "error", progress: 0, error: err.message })
+      );
     }
   };
 
+  // ── Bulk download ───────────────────────────────────────────────────────────
   const downloadSelected = async () => {
-    if (!playlist || selected.size === 0) return;
+    if (!playlist || selected.size === 0 || bulkDownloading) return;
     setBulkDownloading(true);
-    const toDownload = playlist.videos.filter((v) => selected.has(v.videoId));
-    for (const video of toDownload) {
-      const curr = downloads.get(video.videoId);
-      if (curr?.status === "done") continue;
+    setDownloads((prev) => {
+      const next = new Map(prev);
+      for (const id of selected) next.set(id, { status: "idle", phase: "idle", progress: 0 });
+      return next;
+    });
+    for (const video of playlist.videos.filter((v) => selected.has(v.videoId))) {
       await downloadVideo(video.videoId, video.title);
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 600));
     }
     setBulkDownloading(false);
   };
 
-  const filteredVideos =
-    playlist?.videos.filter(
-      (v) =>
-        !filter ||
-        v.title.toLowerCase().includes(filter.toLowerCase()) ||
-        v.author.toLowerCase().includes(filter.toLowerCase())
-    ) || [];
+  // ── Derived state ───────────────────────────────────────────────────────────
+  const allDl = [...downloads.values()];
+  const doneCount  = allDl.filter((d) => d.status === "done").length;
+  const errorCount = allDl.filter((d) => d.status === "error").length;
+  const activeCount = allDl.filter((d) => d.status === "downloading").length;
+  const allSelected = playlist && selected.size === playlist.videos.length;
 
-  const doneCount = [...downloads.values()].filter((d) => d.status === "done").length;
-  const errorCount = [...downloads.values()].filter((d) => d.status === "error").length;
-  const activeCount = [...downloads.values()].filter(
-    (d) => d.status === "downloading" || d.status === "fetching"
-  ).length;
+  const displayedVideos = useMemo(() => {
+    if (!playlist) return [];
+    const sorted = sortVideos(playlist.videos, sortBy, selected);
+    if (!filter) return sorted;
+    const q = filter.toLowerCase();
+    return sorted.filter((v) =>
+      v.title.toLowerCase().includes(q) || v.author.toLowerCase().includes(q)
+    );
+  }, [playlist, sortBy, filter, selected]);
 
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="border-b border-zinc-900 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded bg-[hsl(var(--accent))] flex items-center justify-center">
-            <Download className="w-3.5 h-3.5 text-black" />
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+
+      {/* ── Header ── */}
+      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FlaskConical className="w-5 h-5 text-primary" />
+            <span className="font-semibold text-lg">YT Labs</span>
           </div>
-          <span className="font-sans font-700 tracking-tight text-zinc-100 text-lg">
-            playlist<span className="text-[hsl(var(--accent))]">dl</span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" onClick={() => setDark(!dark)}>
+                {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{dark ? "Light mode" : "Dark mode"}</TooltipContent>
+          </Tooltip>
         </div>
-        <span className="text-xs font-mono text-zinc-600">
-          No API key required · Client-side downloads
-        </span>
       </header>
 
-      <div className="flex-1 max-w-4xl w-full mx-auto px-4 py-10 flex flex-col gap-8">
-        {/* URL Input */}
-        <div className="fade-in">
-          <p className="text-xs font-mono text-zinc-500 tracking-widest uppercase mb-3">
-            YouTube Playlist URL
-          </p>
-          <div className="flex gap-2">
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && fetchPlaylist()}
-                placeholder="https://youtube.com/playlist?list=..."
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 pr-10 text-sm font-mono text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-600 transition-colors"
-              />
-              {url && (
-                <button
-                  onClick={() => {
-                    setUrl("");
-                    setPlaylist(null);
-                    setError(null);
-                  }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:py-8 flex flex-col gap-5 sm:gap-6">
+
+        {/* ── URL Input — shadcn input-group style ── */}
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="playlist-url">YouTube Playlist URL</Label>
+          {/* Input group: icon prefix + input + button suffix all joined */}
+          <div className="flex rounded-md border border-input ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 overflow-hidden">
+            {/* Prefix icon */}
+            <div className="flex items-center px-3 bg-muted border-r border-input shrink-0">
+              <Search className="w-4 h-4 text-muted-foreground" />
             </div>
-            <button
+            {/* Input — no individual border/ring */}
+            <input
+              id="playlist-url"
+              placeholder="https://youtube.com/playlist?list=PLxxxxxxx"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && fetchPlaylist()}
+              className="flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none"
+            />
+            {/* Clear button — only when there's input */}
+            {url && (
+              <button
+                onClick={() => { setUrl(""); setPlaylist(null); setError(null); }}
+                className="flex items-center px-2 text-muted-foreground hover:text-foreground border-l border-input bg-background transition-colors"
+                tabIndex={-1}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {/* Fetch button — joined suffix */}
+            <Button
               onClick={fetchPlaylist}
               disabled={loading || !url.trim()}
-              className="flex items-center gap-2 px-5 py-3 bg-[hsl(var(--accent))] hover:bg-[hsl(142,71%,40%)] disabled:opacity-40 disabled:cursor-not-allowed text-black font-sans font-600 text-sm rounded-lg transition-colors"
+              className="rounded-none rounded-r-md border-l border-input shrink-0"
             >
-              {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Search className="w-4 h-4" />
-              )}
-              {loading ? "Loading..." : "Fetch"}
-            </button>
+              {loading
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Download className="w-4 h-4" />}
+              <span className="hidden sm:inline ml-1">
+                {loading ? "Loading..." : "Fetch"}
+              </span>
+            </Button>
           </div>
-
           {error && (
-            <div className="mt-3 flex items-center gap-2 text-red-400 text-sm font-mono">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              {error}
-            </div>
+            <p className="text-sm text-destructive flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </p>
           )}
         </div>
 
-        {/* Playlist Content */}
+        {/* ── Playlist ── */}
         {playlist && (
-          <div className="fade-in flex flex-col gap-6">
-            {/* Info & Stats */}
-            <div className="fade-in-delay-1">
-              <div className="flex items-start justify-between gap-4 mb-5">
-                <div>
-                  <h1 className="text-2xl font-sans font-700 text-zinc-100 leading-tight mb-1">
-                    {playlist.title}
-                  </h1>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-zinc-500 font-mono">
-                      {playlist.author}
-                    </span>
+          <>
+            <Separator />
+
+            {/* Title + author */}
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-start gap-2 flex-wrap">
+                <h2 className="text-lg sm:text-xl font-semibold leading-tight">{playlist.title}</h2>
+                <Tooltip>
+                  <TooltipTrigger asChild>
                     <a
                       href={`https://youtube.com/playlist?list=${playlist.playlistId}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-zinc-600 hover:text-zinc-400 transition-colors"
+                      className="text-muted-foreground hover:text-foreground mt-0.5 shrink-0"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink className="w-4 h-4" />
                     </a>
-                  </div>
-                </div>
+                  </TooltipTrigger>
+                  <TooltipContent>Open on YouTube</TooltipContent>
+                </Tooltip>
               </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <StatCard icon={List} label="Videos" value={`${playlist.videoCount}`} />
-                <StatCard icon={Clock} label="Total Length" value={playlist.totalDuration} />
-                <StatCard icon={BarChart2} label="Avg. Length" value={playlist.averageDuration} />
-              </div>
+              <p className="text-sm text-muted-foreground">{playlist.author}</p>
             </div>
 
-            {/* Format & Quality */}
-            <div className="fade-in-delay-2 bg-zinc-900 border border-zinc-800 rounded-lg p-4 flex flex-wrap gap-4 items-end">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-mono text-zinc-500 tracking-widest uppercase">
-                  Format
-                </label>
-                <div className="flex gap-2">
-                  {["mp4", "mp3"].map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => {
-                        setFormat(f);
-                        setQuality("highest");
-                      }}
-                      className={cn(
-                        "flex items-center gap-1.5 px-4 py-2 rounded border text-sm font-mono transition-all",
-                        format === f
-                          ? "border-[hsl(var(--accent))] bg-[hsl(var(--accent))]/10 text-[hsl(var(--accent))]"
-                          : "border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-300"
-                      )}
-                    >
-                      {f === "mp4" ? (
-                        <Video className="w-3.5 h-3.5" />
-                      ) : (
-                        <Music className="w-3.5 h-3.5" />
-                      )}
-                      .{f}
-                    </button>
-                  ))}
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              {[
+                {
+                  icon: List,
+                  label: "Videos",
+                  value: String(playlist.videoCount),
+                  sub: playlist.unavailableCount > 0
+                    ? `${playlist.unavailableCount} unavailable`
+                    : null,
+                },
+                { icon: Clock,     label: "Total", value: playlist.totalDuration, sub: null },
+                { icon: BarChart2, label: "Avg",   value: playlist.averageDuration, sub: null },
+              ].map(({ icon: Icon, label, value, sub }) => (
+                <div key={label} className="rounded-lg border bg-card p-3 sm:p-4 flex flex-col gap-1">
+                  <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                    <Icon className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                    <span className="hidden sm:inline">{label}</span>
+                  </div>
+                  <p className="text-lg sm:text-2xl font-mono font-medium leading-tight">{value}</p>
+                  <p className="text-xs text-muted-foreground sm:hidden">{label}</p>
+                  {sub && (
+                    <p className="text-xs text-destructive font-mono">{sub}</p>
+                  )}
                 </div>
+              ))}
+            </div>
+
+            <Separator />
+
+            {/* Format + Quality + Download */}
+            <div className="flex flex-wrap items-end gap-3 sm:gap-4">
+              {/* Format */}
+              <div className="flex flex-col gap-1.5">
+                <Label>Format</Label>
+                <Tabs value={format} onValueChange={(v) => { setFormat(v); setQuality("highest"); }}>
+                  <TabsList>
+                    <TabsTrigger value="mp4" className="flex items-center gap-1.5">
+                      <Video className="w-3.5 h-3.5" />
+                      <span>MP4</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="mp3" className="flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5" />
+                      <span>MP3</span>
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </div>
 
-              <div className="flex flex-col gap-1.5 min-w-[180px]">
-                <label className="text-xs font-mono text-zinc-500 tracking-widest uppercase">
-                  Quality
-                </label>
-                <Select
-                  options={format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES}
-                  value={quality}
-                  onChange={setQuality}
-                />
+              {/* Quality */}
+              <div className="flex flex-col gap-1.5 w-[160px] sm:w-[180px]">
+                <Label>Quality</Label>
+                <Select value={quality} onValueChange={setQuality}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {(format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES).map((q) => (
+                        <SelectItem key={q.value} value={q.value}>{q.label}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="ml-auto flex items-center gap-2">
+              {/* Status + Download */}
+              <div className="ml-auto flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
                 {(doneCount > 0 || errorCount > 0) && (
-                  <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
+                  <div className="flex items-center gap-2 text-xs font-mono">
                     {doneCount > 0 && (
-                      <span className="text-green-400">{doneCount} done</span>
+                      <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{doneCount} done</span>
+                        <span className="sm:hidden">{doneCount}</span>
+                      </span>
                     )}
                     {errorCount > 0 && (
-                      <span className="text-red-400">{errorCount} error</span>
+                      <span className="flex items-center gap-1 text-destructive">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{errorCount} failed</span>
+                        <span className="sm:hidden">{errorCount}</span>
+                      </span>
                     )}
                   </div>
                 )}
-                <button
+                <Button
                   onClick={downloadSelected}
-                  disabled={bulkDownloading || selected.size === 0 || activeCount > 0}
-                  className="flex items-center gap-2 px-5 py-2 bg-[hsl(var(--accent))] hover:bg-[hsl(142,71%,40%)] disabled:opacity-40 disabled:cursor-not-allowed text-black text-sm font-sans font-600 rounded transition-colors"
+                  disabled={selected.size === 0 || activeCount > 0}
+                  size="sm"
+                  className="sm:h-10 sm:px-4"
                 >
-                  {bulkDownloading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4" />
-                  )}
-                  Download {selected.size > 0 ? `(${selected.size})` : ""}
-                </button>
+                  {bulkDownloading
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : doneCount > 0 && doneCount === selected.size
+                      ? <RefreshCw className="w-4 h-4" />
+                      : <Download className="w-4 h-4" />}
+                  <span className="hidden sm:inline">
+                    {bulkDownloading ? "Downloading..." : `Download (${selected.size})`}
+                  </span>
+                  <span className="sm:hidden">{selected.size}</span>
+                </Button>
               </div>
             </div>
 
-            {/* Video List */}
-            <div className="fade-in-delay-3">
-              <div className="flex items-center gap-3 mb-2 px-1">
-                <button
-                  onClick={toggleAll}
-                  className="flex items-center gap-2 text-xs font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
-                >
-                  {selected.size === playlist.videos.length ? (
-                    <CheckSquare className="w-3.5 h-3.5 text-[hsl(var(--accent))]" />
-                  ) : (
-                    <Square className="w-3.5 h-3.5" />
-                  )}
-                  {selected.size === playlist.videos.length
-                    ? "Deselect all"
-                    : "Select all"}
-                </button>
-                <span className="text-zinc-800">|</span>
-                <span className="text-xs font-mono text-zinc-600">
-                  {selected.size} of {playlist.videos.length} selected
-                </span>
-                <div className="ml-auto relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600" />
-                  <input
-                    type="text"
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    placeholder="Filter..."
-                    className="pl-7 pr-3 py-1.5 text-xs font-mono bg-zinc-900 border border-zinc-800 rounded text-zinc-300 placeholder-zinc-700 focus:outline-none focus:border-zinc-700 w-40"
-                  />
-                </div>
+            <Separator />
+
+            {/* Toolbar */}
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+              {/* Select all */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="select-all"
+                  checked={!!allSelected}
+                  onCheckedChange={toggleAll}
+                />
+                <Label htmlFor="select-all" className="cursor-pointer text-sm font-normal whitespace-nowrap">
+                  {allSelected ? "Deselect all" : "Select all"}
+                </Label>
               </div>
 
-              <div className="border border-zinc-900 rounded-lg overflow-hidden">
-                {filteredVideos.length === 0 ? (
-                  <div className="py-12 text-center text-zinc-600 font-mono text-sm">
-                    No videos match your filter
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {selected.size}/{playlist.videos.length}
+              </span>
+
+              {/* Sort */}
+              <div className="flex items-center gap-1.5">
+                <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <Select value={sortBy} onValueChange={setSortBy}>
+                  <SelectTrigger className="h-8 w-[130px] sm:w-[155px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {SORT_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value} className="text-xs">
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Filter */}
+              <div className="ml-auto relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  placeholder="Filter..."
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="pl-8 h-8 w-28 sm:w-40 text-sm"
+                />
+              </div>
+            </div>
+
+            {/* ── Video list ── */}
+            <div className="rounded-lg border divide-y overflow-hidden">
+              {displayedVideos.length === 0 ? (
+                <p className="text-center py-12 text-sm text-muted-foreground">
+                  No videos match your filter.
+                </p>
+              ) : displayedVideos.map((video) => {
+                const dl = downloads.get(video.videoId);
+                const status = dl?.status || "idle";
+                const phase  = dl?.phase  || "idle";
+                const isSelected = selected.has(video.videoId);
+
+                return (
+                  <div
+                    key={video.videoId}
+                    onClick={() => toggleVideo(video.videoId)}
+                    className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 cursor-pointer transition-all select-none ${
+                      isSelected
+                        ? "bg-background hover:bg-muted/40"
+                        : "opacity-40 grayscale hover:opacity-60"
+                    }`}
+                  >
+                    {/* Checkbox — stop propagation so double-toggle doesn't happen */}
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleVideo(video.videoId)}
+                      />
+                    </div>
+
+                    {/* Index */}
+                    <span className="w-4 sm:w-5 text-xs text-muted-foreground text-right shrink-0 font-mono hidden sm:block">
+                      {video.index}
+                    </span>
+
+                    {/* Thumbnail */}
+                    <div className="shrink-0 w-12 h-8 sm:w-14 sm:h-9 rounded overflow-hidden bg-muted">
+                      <img
+                        src={video.thumbnail}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        onError={(e) => { e.target.style.display = "none"; }}
+                      />
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate leading-snug">{video.title}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-xs text-muted-foreground truncate">{video.author}</p>
+                        {video.viewCount > 0 && (
+                          <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
+                            · {formatViews(video.viewCount)}
+                          </span>
+                        )}
+                        {video.uploadDateDisplay && (
+                          <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
+                            · {video.uploadDateDisplay}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Single progress bar for both processing and streaming phases */}
+                      {status === "downloading" && (
+                        <Progress value={dl.progress} className="h-1 mt-1.5" />
+                      )}
+                      {status === "error" && (
+                        <p className="text-xs text-destructive mt-0.5 truncate font-mono">
+                          {dl.error}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Duration */}
+                    <span className="shrink-0 text-xs text-muted-foreground font-mono hidden sm:block">
+                      {video.duration}
+                    </span>
+
+                    {/* Status icon — only when not idle, icon only as tooltip trigger */}
+                    <div className="shrink-0 w-5 flex justify-center" onClick={(e) => e.stopPropagation()}>
+                      {status === "downloading" && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-default">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {phase === "processing"
+                              ? `Converting — ${dl.progress}%`
+                              : `Downloading — ${dl.progress}%`}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {status === "done" && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-default">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Done</TooltipContent>
+                        </Tooltip>
+                      )}
+                      {status === "error" && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-default">
+                              <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>{dl.error || "Error"}</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
                   </div>
-                ) : (
-                  filteredVideos.map((video) => (
-                    <VideoRow
-                      key={video.videoId}
-                      video={video}
-                      selected={selected.has(video.videoId)}
-                      onToggle={() => toggleVideo(video.videoId)}
-                      download={downloads.get(video.videoId)}
-                    />
-                  ))
-                )}
-              </div>
+                );
+              })}
             </div>
-          </div>
+          </>
         )}
 
-        {/* Empty state */}
+        {/* ── Empty state ── */}
         {!playlist && !loading && !error && (
-          <div className="flex-1 flex flex-col items-center justify-center py-24 gap-4 fade-in">
-            <div className="w-14 h-14 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-              <Download className="w-6 h-6 text-zinc-600" />
+          <div className="flex flex-col items-center justify-center py-20 sm:py-24 gap-4 text-center">
+            <div className="rounded-full border p-4 bg-muted">
+              <FlaskConical className="w-8 h-8 text-muted-foreground" />
             </div>
-            <div className="text-center">
-              <p className="text-zinc-400 text-sm mb-1">
-                Paste a YouTube playlist URL above
-              </p>
-              <p className="text-zinc-600 text-xs font-mono">
-                Downloads happen directly in your browser — no signup required
+            <div>
+              <p className="font-medium">Paste a YouTube playlist URL to get started</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Download videos as MP4 or audio as MP3 — no API key needed.
               </p>
             </div>
-            <div className="flex gap-2 mt-2">
-              <Badge className="bg-zinc-900 border border-zinc-800 text-zinc-500">
-                <Video className="w-3 h-3" /> MP4
-              </Badge>
-              <Badge className="bg-zinc-900 border border-zinc-800 text-zinc-500">
-                <Music className="w-3 h-3" /> MP3
-              </Badge>
-              <Badge className="bg-zinc-900 border border-zinc-800 text-zinc-500">
-                <BarChart2 className="w-3 h-3" /> Multi-quality
-              </Badge>
+            <div className="flex gap-2 flex-wrap justify-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
+                <Video className="w-3.5 h-3.5" /> MP4 up to 1080p
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
+                <Music className="w-3.5 h-3.5" /> MP3 up to 320kbps
+              </span>
             </div>
           </div>
         )}
-      </div>
 
-      {/* Footer */}
-      <footer className="border-t border-zinc-900 px-6 py-4 text-center">
-        <p className="text-xs font-mono text-zinc-700">
-          Uses <code className="text-zinc-600">ytdl-core</code> · No API key ·
-          Files download via your browser
-        </p>
+      </main>
+
+      <footer className="border-t py-4 text-center text-xs text-muted-foreground font-mono">
+        YT Labs · Powered by yt-dlp &amp; ffmpeg
       </footer>
-    </main>
+    </div>
   );
 }

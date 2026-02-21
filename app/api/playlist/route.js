@@ -1,16 +1,19 @@
+// 📁 app/api/playlist/route.js
+import { create } from "youtube-dl-exec";
+import path from "path";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+const binName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+const binPath = path.join(process.cwd(), "node_modules", "youtube-dl-exec", "bin", binName);
+const youtubeDl = create(binPath);
 
 function extractPlaylistId(url) {
   try {
     const parsed = new URL(url);
-    return (
-      parsed.searchParams.get("list") ||
-      parsed.pathname.split("/").pop() ||
-      null
-    );
+    return parsed.searchParams.get("list") || null;
   } catch {
     return null;
   }
@@ -25,89 +28,19 @@ function formatDuration(seconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-async function fetchPlaylistVideos(playlistId) {
-  const response = await fetch(
-    `https://www.youtube.com/playlist?list=${playlistId}`,
-    {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    }
-  );
+const UNAVAILABLE_TITLES = new Set([
+  "[private video]",
+  "[deleted video]",
+  "[unavailable]",
+]);
 
-  const html = await response.text();
-
-  const match = html.match(/var ytInitialData = ({.+?});<\/script>/s);
-  if (!match) throw new Error("Could not parse playlist data");
-
-  const data = JSON.parse(match[1]);
-
-  const title =
-    data?.metadata?.playlistMetadataRenderer?.title ||
-    data?.header?.playlistHeaderRenderer?.title?.runs?.[0]?.text ||
-    "Unknown Playlist";
-
-  const authorRaw =
-    data?.header?.playlistHeaderRenderer?.ownerText?.runs?.[0]?.text ||
-    data?.sidebar?.playlistSidebarRenderer?.items?.[0]
-      ?.playlistSidebarPrimaryInfoRenderer?.videoOwnerRenderer?.title
-      ?.runs?.[0]?.text ||
-    "Unknown";
-
-  const contents =
-    data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer
-      ?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer
-      ?.contents?.[0]?.playlistVideoListRenderer?.contents || [];
-
-  const videos = [];
-
-  for (let i = 0; i < contents.length; i++) {
-    const item = contents[i]?.playlistVideoRenderer;
-    if (!item) continue;
-
-    const videoId = item.videoId;
-    const videoTitle = item.title?.runs?.[0]?.text || "Unknown";
-    const durationText =
-      item.lengthText?.simpleText ||
-      item.lengthText?.runs?.[0]?.text ||
-      "0:00";
-    const thumbnail = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
-    const videoAuthor =
-      item.shortBylineText?.runs?.[0]?.text || authorRaw || "Unknown";
-
-    const parts = durationText.split(":").map(Number);
-    let secs = 0;
-    if (parts.length === 3) secs = parts[0] * 3600 + parts[1] * 60 + parts[2];
-    else if (parts.length === 2) secs = parts[0] * 60 + parts[1];
-
-    videos.push({
-      videoId,
-      title: videoTitle,
-      duration: durationText,
-      durationSeconds: secs,
-      thumbnail,
-      author: videoAuthor,
-      index: i + 1,
-    });
-  }
-
-  const totalSeconds = videos.reduce((sum, v) => sum + v.durationSeconds, 0);
-  const avgSeconds =
-    videos.length > 0 ? Math.round(totalSeconds / videos.length) : 0;
-
-  return {
-    playlistId,
-    title,
-    author: authorRaw,
-    videoCount: videos.length,
-    videos,
-    totalDuration: formatDuration(totalSeconds),
-    totalSeconds,
-    averageDuration: formatDuration(avgSeconds),
-    averageSeconds: avgSeconds,
-  };
+function isAvailable(entry) {
+  if (!entry || !entry.id) return false;
+  const title = (entry.title || "").toLowerCase().trim();
+  if (UNAVAILABLE_TITLES.has(title)) return false;
+  // Flat entries that are just URL stubs have no duration/title
+  if (entry.availability === "private" || entry.availability === "needs_auth") return false;
+  return true;
 }
 
 export async function GET(req) {
@@ -118,14 +51,122 @@ export async function GET(req) {
 
   const playlistId = extractPlaylistId(url);
   if (!playlistId) {
-    return NextResponse.json({ error: "Invalid playlist URL" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid playlist URL — must contain ?list=..." },
+      { status: 400 }
+    );
   }
 
   try {
-    const data = await fetchPlaylistVideos(playlistId);
-    return NextResponse.json(data);
+    // --flat-playlist         → fast, one HTTP request for the whole playlist
+    // --ignore-errors         → skip private/deleted videos instead of crashing
+    // --extractor-args        → tell youtube tab extractor to include more metadata
+    //
+    // Flat entries DO carry: id, title, duration, view_count, upload_date, channel, thumbnail
+    // They just won't have format lists — which we don't need for the playlist index.
+    const data = await youtubeDl(
+      `https://www.youtube.com/playlist?list=${playlistId}`,
+      {
+        dumpSingleJson: true,
+        flatPlaylist: true,
+        ignoreErrors: true,   // ← key fix: skip unavailable instead of crashing
+        quiet: true,
+        noWarnings: true,
+      }
+    );
+
+    const allEntries = data.entries || [];
+    const entries = allEntries.filter(isAvailable);
+    const unavailableCount = allEntries.length - entries.length;
+
+    let idx = 1;
+    const videos = entries.map((entry) => {
+      const secs = entry.duration || 0;
+
+      // upload_date is "YYYYMMDD" — flat playlist includes it for available videos
+      const raw = entry.upload_date || "";
+      const uploadDateDisplay = raw.length === 8
+        ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+        : "";
+
+      return {
+        videoId: entry.id,
+        title: entry.title || "Unknown",
+        duration: formatDuration(secs),
+        durationSeconds: secs,
+        thumbnail: `https://i.ytimg.com/vi/${entry.id}/mqdefault.jpg`,
+        author: entry.uploader || entry.channel || entry.uploader_id || data.uploader || "Unknown",
+        index: idx++,
+        viewCount: entry.view_count || 0,
+        uploadDate: raw,           // "YYYYMMDD" for sorting
+        uploadDateDisplay,         // "YYYY-MM-DD" for display
+      };
+    });
+
+    const totalSeconds = videos.reduce((sum, v) => sum + v.durationSeconds, 0);
+    const avgSeconds = videos.length > 0 ? Math.round(totalSeconds / videos.length) : 0;
+
+    return NextResponse.json({
+      playlistId,
+      title: data.title || "Unknown Playlist",
+      author: data.uploader || data.channel || "Unknown",
+      videoCount: videos.length,
+      unavailableCount,
+      videos,
+      totalDuration: formatDuration(totalSeconds),
+      totalSeconds,
+      averageDuration: formatDuration(avgSeconds),
+      averageSeconds: avgSeconds,
+    });
   } catch (err) {
     console.error("Playlist fetch error:", err);
+
+    // If yt-dlp exited with an error but still produced stdout (partial data), use it
+    if (err.stdout) {
+      try {
+        const data = JSON.parse(err.stdout);
+        const allEntries = data.entries || [];
+        const entries = allEntries.filter(isAvailable);
+        const unavailableCount = allEntries.length - entries.length;
+        let idx = 1;
+        const videos = entries.map((entry) => {
+          const secs = entry.duration || 0;
+          const raw = entry.upload_date || "";
+          const uploadDateDisplay = raw.length === 8
+            ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+            : "";
+          return {
+            videoId: entry.id,
+            title: entry.title || "Unknown",
+            duration: formatDuration(secs),
+            durationSeconds: secs,
+            thumbnail: `https://i.ytimg.com/vi/${entry.id}/mqdefault.jpg`,
+            author: entry.uploader || entry.channel || data.uploader || "Unknown",
+            index: idx++,
+            viewCount: entry.view_count || 0,
+            uploadDate: raw,
+            uploadDateDisplay,
+          };
+        });
+        const totalSeconds = videos.reduce((sum, v) => sum + v.durationSeconds, 0);
+        const avgSeconds = videos.length > 0 ? Math.round(totalSeconds / videos.length) : 0;
+        return NextResponse.json({
+          playlistId,
+          title: data.title || "Unknown Playlist",
+          author: data.uploader || data.channel || "Unknown",
+          videoCount: videos.length,
+          unavailableCount,
+          videos,
+          totalDuration: formatDuration(totalSeconds),
+          totalSeconds,
+          averageDuration: formatDuration(avgSeconds),
+          averageSeconds: avgSeconds,
+        });
+      } catch (_) {
+        // fall through to error response
+      }
+    }
+
     return NextResponse.json(
       { error: err?.message || "Failed to fetch playlist" },
       { status: 500 }

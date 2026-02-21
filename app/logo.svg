@@ -1,0 +1,29 @@
+<svg width="120" height="120" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+<style>
+.spin-ring {
+transform-origin: center;
+animation: spin 1.5s linear infinite;
+}
+.bounce-arrow {
+animation: bounce 1s ease-in-out infinite;
+}
+@keyframes spin {
+100% { transform: rotate(360deg); }
+}
+@keyframes bounce {
+0%, 100% { transform: translateY(0); }
+50% { transform: translateY(1.5px); }
+}
+</style>
+
+<circle cx="12" cy="12" r="10" stroke="#E5E5E5" stroke-width="2"/>
+
+<circle class="spin-ring" cx="12" cy="12" r="10" stroke="#065FD4" stroke-width="2" stroke-linecap="round" stroke-dasharray="20 62.8"/>
+
+<g class="bounce-arrow">
+<path d="M12 6.5V14.5M12 14.5L8.5 11M12 14.5L15.5 11" stroke="#065FD4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+
+<path d="M8 17.5H16" stroke="#065FD4" stroke-width="2" stroke-linecap="round"/>
+</svg>
