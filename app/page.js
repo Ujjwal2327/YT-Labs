@@ -164,11 +164,10 @@ export default function Home() {
     );
 
     // Fake progress during server-side processing (yt-dlp download + ffmpeg convert).
-    // Step multiplier is scaled by duration so short and long videos both feel proportional:
-    //   300s (5 min) → k = 0.04  (baseline)
-    //   60s  (1 min) → k = 0.20  (faster, short job)
-    //   3600s (1 hr) → k = 0.003 (much slower, long job)
-    const k = Math.min(0.20, Math.max(0.003, 0.04 * (300 / durationSeconds)));
+    // k scales with duration. MP3 also runs libmp3lame encoding, taking ~2.5x longer than
+    // MP4, so we divide k by 2.5 for mp3 to keep the bar moving at a matching pace.
+    const formatSlowdown = format === "mp3" ? 2.5 : 1;
+    const k = Math.min(0.07, Math.max(0.0004, (0.014 * (300 / durationSeconds)) / formatSlowdown));
 
     let fakeProgress = 0;
     const fakeInterval = setInterval(() => {
@@ -184,7 +183,7 @@ export default function Home() {
         }
         return next;
       });
-    }, 400);
+    }, 800);
 
     try {
       const res = await fetch(
