@@ -61,8 +61,6 @@ const MP3_QUALITIES = [
 const SORT_OPTIONS = [
   { label: "Playlist order",    value: "default"   },
   { label: "Selected first",    value: "selected"  },
-  { label: "Latest first",      value: "latest"    },
-  { label: "Oldest first",      value: "oldest"    },
   { label: "Most viewed",       value: "views"     },
   { label: "Shortest first",    value: "shortest"  },
   { label: "Longest first",     value: "longest"   },
@@ -79,8 +77,6 @@ function sortVideos(videos, sortBy, selected) {
         const bS = selected.has(b.videoId) ? 0 : 1;
         return aS - bS || a.index - b.index;
       });
-    case "latest":   return arr.sort((a, b) => b.uploadDate.localeCompare(a.uploadDate));
-    case "oldest":   return arr.sort((a, b) => a.uploadDate.localeCompare(b.uploadDate));
     case "views":    return arr.sort((a, b) => b.viewCount - a.viewCount);
     case "shortest": return arr.sort((a, b) => a.durationSeconds - b.durationSeconds);
     case "longest":  return arr.sort((a, b) => b.durationSeconds - a.durationSeconds);
