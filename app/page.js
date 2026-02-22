@@ -1687,7 +1687,7 @@ export default function Home() {
 
         {/* ── Empty state ── */}
         {!playlist && !videoInfo && !loading && !error && (
-          <div className="flex flex-col items-center text-center gap-6 py-16 sm:py-20">
+          <div className="flex flex-col items-center text-center gap-6 my-auto">
             <div className="rounded-2xl border bg-muted/50 p-4">
               <FlaskConical className="w-8 h-8 text-primary" />
             </div>
@@ -1721,7 +1721,15 @@ export default function Home() {
       </main>
 
       <footer className="border-t py-4 text-center text-xs text-muted-foreground font-mono">
-        YT Labs · Powered by yt-dlp &amp; ffmpeg
+        Made with ♥ by{" "}
+        <a
+          href="https://github.com/Ujjwal2327/YT-Labs"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground transition-colors"
+        >
+          Ujjwal
+        </a>
       </footer>
     </div>
   );
