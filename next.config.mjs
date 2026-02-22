@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
   images: {
     remotePatterns: [
       {
@@ -13,6 +12,7 @@ const nextConfig = {
     "@distube/ytdl-core",
     "fluent-ffmpeg",
     "@ffmpeg-installer/ffmpeg",
+    "youtube-dl-exec",   // needed so Next.js doesn't try to bundle the native binary caller
   ],
 };
 

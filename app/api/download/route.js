@@ -1,5 +1,5 @@
 // 📁 app/api/download/route.js
-import { getYtDlp } from "@/lib/ytdlp";
+import { getYtDlp, getCookiePath } from "@/lib/ytdlp";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffmpeg from "fluent-ffmpeg";
 import { NextResponse } from "next/server";
@@ -50,14 +50,22 @@ export async function GET(req) {
 
   // Resolve binary once (cached after first call)
   const youtubeDl = await getYtDlp();
+  const cookiePath = getCookiePath();
+
+  // Shared extra options applied to every yt-dlp call
+  const baseOpts = {
+    quiet: true,
+    noWarnings: true,
+    // Pass cookies if available (needed on cloud servers to bypass bot detection)
+    ...(cookiePath && { cookies: cookiePath }),
+  };
 
   // Fetch title (best-effort)
   let safeName = `media_${videoId}`;
   try {
     const info = await youtubeDl(videoUrl, {
       dumpSingleJson: true,
-      quiet: true,
-      noWarnings: true,
+      ...baseOpts,
     });
     safeName = (info.title || safeName)
       .replace(/[^\w\s\-]/g, "")
@@ -75,8 +83,7 @@ export async function GET(req) {
       await youtubeDl(videoUrl, {
         format: "bestaudio/best",
         output: rawAudioPath + ".%(ext)s",
-        quiet: true,
-        noWarnings: true,
+        ...baseOpts,
       });
 
       const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(`${uid}_audio`));
@@ -132,9 +139,8 @@ export async function GET(req) {
         format: ytFormat,
         output: mp4Path,
         mergeOutputFormat: "mp4",
-        quiet: true,
-        noWarnings: true,
         ffmpegLocation: ffmpegInstaller.path,
+        ...baseOpts,
       });
 
       if (!fs.existsSync(mp4Path)) throw new Error("yt-dlp did not produce a video file");

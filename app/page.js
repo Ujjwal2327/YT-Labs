@@ -133,15 +133,17 @@ export default function Home() {
   }, [url]);
 
   // ── Selection ───────────────────────────────────────────────────────────────
-  const toggleVideo = (id) =>
+  const toggleVideo = (id) => {
+    if (isDownloadingActive) return;
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
 
   const toggleAll = () => {
-    if (!playlist) return;
+    if (!playlist || isDownloadingActive) return;
     setSelected(
       selected.size === playlist.videos.length
         ? new Set()
@@ -262,6 +264,8 @@ export default function Home() {
       await new Promise((r) => setTimeout(r, 600));
     }
     setBulkDownloading(false);
+    // Reset all statuses back to idle so the UI is clean for the next run
+    setDownloads(new Map());
   };
 
   // ── Derived state ───────────────────────────────────────────────────────────
@@ -269,6 +273,7 @@ export default function Home() {
   const doneCount  = allDl.filter((d) => d.status === "done").length;
   const errorCount = allDl.filter((d) => d.status === "error").length;
   const activeCount = allDl.filter((d) => d.status === "downloading").length;
+  const isDownloadingActive = bulkDownloading || activeCount > 0;
   const allSelected = playlist && selected.size === playlist.videos.length;
 
   const displayedVideos = useMemo(() => {
@@ -361,7 +366,7 @@ export default function Home() {
 
             {/* Title + author */}
             <div className="flex flex-col gap-0.5">
-              <div className="flex items-start gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg sm:text-xl font-semibold leading-tight">{playlist.title}</h2>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -495,8 +500,9 @@ export default function Home() {
                   id="select-all"
                   checked={!!allSelected}
                   onCheckedChange={toggleAll}
+                  disabled={isDownloadingActive}
                 />
-                <Label htmlFor="select-all" className="cursor-pointer text-sm font-normal whitespace-nowrap">
+                <Label htmlFor="select-all" className={`text-sm font-normal whitespace-nowrap ${isDownloadingActive ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
                   {allSelected ? "Deselect all" : "Select all"}
                 </Label>
               </div>
@@ -552,7 +558,9 @@ export default function Home() {
                   <div
                     key={video.videoId}
                     onClick={() => toggleVideo(video.videoId)}
-                    className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 cursor-pointer transition-all select-none ${
+                    className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 transition-all select-none ${
+                      isDownloadingActive ? "cursor-not-allowed" : "cursor-pointer"
+                    } ${
                       isSelected
                         ? "bg-background hover:bg-muted/40"
                         : "opacity-40 grayscale hover:opacity-60"

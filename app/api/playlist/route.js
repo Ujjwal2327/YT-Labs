@@ -1,5 +1,5 @@
 // 📁 app/api/playlist/route.js
-import { getYtDlp } from "@/lib/ytdlp";
+import { getYtDlp, getCookiePath } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -96,6 +96,7 @@ export async function GET(req) {
 
   try {
     const youtubeDl = await getYtDlp();
+    const cookiePath = getCookiePath();
 
     const data = await youtubeDl(
       `https://www.youtube.com/playlist?list=${playlistId}`,
@@ -105,12 +106,8 @@ export async function GET(req) {
         ignoreErrors: true,
         quiet: true,
         noWarnings: true,
-        // Bypass YouTube datacenter IP restrictions on Vercel
-        addHeader: [
-          "referer:youtube.com",
-          "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ],
-        extractorArgs: "youtube:player_client=web,web_embedded",
+        // Pass cookies if available (needed on cloud servers to bypass bot detection)
+        ...(cookiePath && { cookies: cookiePath }),
       }
     );
 

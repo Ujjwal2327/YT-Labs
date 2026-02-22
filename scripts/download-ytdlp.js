@@ -1,6 +1,11 @@
 // 📁 scripts/download-ytdlp.js
 // Downloads the standalone yt-dlp binary at build/install time.
-// Saves to bin/yt-dlp (project root) so Vercel bundles it into the deployment.
+// Saves to bin/yt-dlp (project root) so it's available in the deployment.
+//
+// NOTE: On Railway (Docker), yt-dlp is installed via the Dockerfile using curl.
+// This script is mainly for local dev and Vercel. If the download fails (e.g.
+// GitHub is unreachable during a cloud build), we exit 0 so the build continues —
+// the system binary installed by the Dockerfile will be used instead.
 
 const https = require("https");
 const fs    = require("fs");
@@ -67,8 +72,11 @@ function download(url, dest, cb) {
 
 download(url, dest, (err) => {
   if (err) {
-    console.error("[yt-dlp] download failed:", err.message);
-    process.exit(1);
+    console.warn("[yt-dlp] download failed:", err.message);
+    // Exit 0 so the build doesn't fail — Railway's Dockerfile installs yt-dlp
+    // at the system level, so the bin/ binary is not required there.
+    console.warn("[yt-dlp] continuing without bin/ binary (system binary expected)");
+    process.exit(0);
   }
   if (platform !== "win32") fs.chmodSync(dest, 0o755);
   console.log(`[yt-dlp] saved to ${dest}`);
