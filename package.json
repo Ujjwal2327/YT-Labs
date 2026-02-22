@@ -12,6 +12,8 @@
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "fluent-ffmpeg": "^2.1.3",
