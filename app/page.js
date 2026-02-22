@@ -358,7 +358,9 @@ async function deviceModeMP4(streamInfo, title, onProgress, onLog) {
     await ff.writeFile(audioIn, audioBytes);
 
     // Stream copy = no re-encoding. Fast and lossless.
-    // frag_keyframe+empty_moov+default_base_moof = fragmented MP4 for blob output.
+    // +faststart moves the moov atom to the front of the file, writing a full
+    // seek index so the browser can jump to any timestamp instantly.
+    // frag_keyframe+empty_moov caused seek jitter because there was no seek table.
     await ff.exec([
       "-i",
       videoIn,
@@ -369,7 +371,7 @@ async function deviceModeMP4(streamInfo, title, onProgress, onLog) {
       "-c:a",
       "copy",
       "-movflags",
-      "frag_keyframe+empty_moov+default_base_moof",
+      "+faststart",
       "-y",
       "out.mp4",
     ]);
@@ -419,7 +421,7 @@ async function deviceModeMP4(streamInfo, title, onProgress, onLog) {
       "-c",
       "copy",
       "-movflags",
-      "frag_keyframe+empty_moov+default_base_moof",
+      "+faststart",
       "-y",
       "out.mp4",
     ]);
