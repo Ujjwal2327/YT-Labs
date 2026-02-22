@@ -78,9 +78,7 @@ function detectUrlType(rawUrl) {
     if (host === "youtu.be") return "video";
     if (!["youtube.com", "m.youtube.com", "music.youtube.com"].includes(host)) return null;
 
-    // /shorts/:id
     if (parsed.pathname.startsWith("/shorts/")) return "video";
-    // Both list and v → treat as playlist (user is inside a playlist)
     if (hasList) return "playlist";
     if (hasVideo) return "video";
     return null;
@@ -129,10 +127,25 @@ function formatViews(n) {
 function VideoCard({ video, onDownload, download }) {
   const [format, setFormat] = useState("mp4");
   const [quality, setQuality] = useState("highest");
+  // Track what format/quality the last completed download used
+  const [downloadedWith, setDownloadedWith] = useState(null);
 
   const status   = download?.status   || "idle";
   const phase    = download?.phase    || "idle";
   const progress = download?.progress || 0;
+
+  // Record what was used when a download completes
+  useEffect(() => {
+    if (status === "done") {
+      setDownloadedWith({ format, quality });
+    }
+  }, [status]);
+
+  // If the user changes format/quality after a completed download, treat as fresh
+  const selectionChanged =
+    downloadedWith &&
+    (downloadedWith.format !== format || downloadedWith.quality !== quality);
+  const effectiveStatus = selectionChanged ? "idle" : status;
 
   return (
     <div className="rounded-xl border bg-card overflow-hidden">
@@ -144,7 +157,6 @@ function VideoCard({ video, onDownload, download }) {
           className="w-full h-full object-cover"
           onError={(e) => { e.target.style.display = "none"; }}
         />
-        {/* Duration badge */}
         <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs font-mono px-1.5 py-0.5 rounded">
           {video.duration}
         </span>
@@ -176,7 +188,7 @@ function VideoCard({ video, onDownload, download }) {
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <User className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate max-w-[180px]">{video.author}</span>
+            <span className="truncate max-w-45">{video.author}</span>
           </span>
           {video.viewCountDisplay && (
             <span className="flex items-center gap-1.5">
@@ -236,7 +248,7 @@ function VideoCard({ video, onDownload, download }) {
           </div>
 
           {/* Quality */}
-          <div className="flex flex-col gap-1.5 w-[160px] sm:w-[180px]">
+          <div className="flex flex-col gap-1.5 w-40 sm:w-45">
             <Label>Quality</Label>
             <Select value={quality} onValueChange={setQuality}>
               <SelectTrigger>
@@ -258,20 +270,20 @@ function VideoCard({ video, onDownload, download }) {
           <div className="ml-auto">
             <Button
               onClick={() => onDownload(video.videoId, video.title, format, quality, video.durationSeconds)}
-              disabled={status === "downloading"}
+              disabled={effectiveStatus === "downloading"}
               size="default"
               className="gap-2"
             >
-              {status === "downloading" ? (
+              {effectiveStatus === "downloading" ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : status === "done" ? (
+              ) : effectiveStatus === "done" ? (
                 <RefreshCw className="w-4 h-4" />
               ) : (
                 <Download className="w-4 h-4" />
               )}
-              {status === "downloading"
+              {effectiveStatus === "downloading"
                 ? `${phase === "processing" ? "Converting" : "Downloading"} ${progress}%`
-                : status === "done"
+                : effectiveStatus === "done"
                   ? "Download again"
                   : "Download"}
             </Button>
@@ -279,15 +291,15 @@ function VideoCard({ video, onDownload, download }) {
         </div>
 
         {/* Progress / status */}
-        {status === "downloading" && (
+        {effectiveStatus === "downloading" && (
           <Progress value={progress} className="h-1.5" />
         )}
-        {status === "done" && (
+        {effectiveStatus === "done" && (
           <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4" /> Download complete
           </p>
         )}
-        {status === "error" && (
+        {effectiveStatus === "error" && (
           <p className="text-sm text-destructive flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4" /> {download.error || "Download failed"}
           </p>
@@ -302,7 +314,7 @@ export default function Home() {
   const [dark, setDark] = useTheme();
 
   const [url, setUrl] = useState("");
-  const [urlType, setUrlType] = useState(null); // 'playlist' | 'video' | null
+  const [urlType, setUrlType] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -325,7 +337,6 @@ export default function Home() {
     setUrl(val);
     const type = detectUrlType(val);
     setUrlType(type);
-    // Clear results when URL changes
     if (!val.trim()) {
       setPlaylist(null);
       setVideoInfo(null);
@@ -345,7 +356,7 @@ export default function Home() {
     setSelected(new Set());
   };
 
-  // ── Fetch (dispatches to playlist or video based on type) ───────────────────
+  // ── Fetch ───────────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     if (!url.trim()) return;
     const type = detectUrlType(url.trim());
@@ -401,11 +412,6 @@ export default function Home() {
       } else {
         setVideoDownload((prev) => ({ ...(prev || {}), ...patch }));
       }
-    };
-
-    const getDl = () => {
-      if (playlist) return null; // handled via map
-      return null;
     };
 
     updateDl({ status: "downloading", phase: "processing", progress: 0 });
@@ -546,7 +552,6 @@ export default function Home() {
     );
   }, [playlist, sortBy, filter, selected]);
 
-  // URL type indicator pill label
   const typePill = urlType === "playlist"
     ? { label: "Playlist", icon: List }
     : urlType === "video"
@@ -581,7 +586,6 @@ export default function Home() {
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="yt-url">YouTube URL</Label>
-            {/* Live type indicator */}
             {typePill && (() => {
               const Icon = typePill.icon;
               return (
@@ -720,7 +724,7 @@ export default function Home() {
                 </Tabs>
               </div>
 
-              <div className="flex flex-col gap-1.5 w-[160px] sm:w-[180px]">
+              <div className="flex flex-col gap-1.5 w-40 sm:w-45">
                 <Label>Quality</Label>
                 <Select value={quality} onValueChange={setQuality}>
                   <SelectTrigger>
@@ -800,7 +804,7 @@ export default function Home() {
               <div className="flex items-center gap-1.5">
                 <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <Select value={sortBy} onValueChange={setSortBy}>
-                  <SelectTrigger className="h-8 w-[130px] sm:w-[155px] text-xs">
+                  <SelectTrigger className="h-8 w-32.5 sm:w-38.75 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
