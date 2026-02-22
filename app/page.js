@@ -1,7 +1,7 @@
 // 📁 app/page.jsx
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,7 @@ import {
   Download, Search, Loader2, AlertCircle, Moon, Sun,
   ExternalLink, Clock, List, BarChart2, Music, Video,
   CheckCircle2, AlertTriangle, RefreshCw, ArrowUpDown, X,
-  FlaskConical,
+  FlaskConical, Eye, Calendar, User, Tag,
 } from "lucide-react";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -66,6 +66,40 @@ const SORT_OPTIONS = [
   { label: "Longest first",     value: "longest"   },
 ];
 
+// ── URL Type Detection ────────────────────────────────────────────────────────
+function detectUrlType(rawUrl) {
+  if (!rawUrl?.trim()) return null;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const host = parsed.hostname.replace(/^www\./, "");
+    const hasList  = parsed.searchParams.has("list");
+    const hasVideo = parsed.searchParams.has("v");
+
+    if (host === "youtu.be") return "video";
+    if (!["youtube.com", "m.youtube.com", "music.youtube.com"].includes(host)) return null;
+
+    // /shorts/:id
+    if (parsed.pathname.startsWith("/shorts/")) return "video";
+    // Both list and v → treat as playlist (user is inside a playlist)
+    if (hasList) return "playlist";
+    if (hasVideo) return "video";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function extractVideoId(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.hostname === "youtu.be") return parsed.pathname.slice(1).split("?")[0];
+    if (parsed.pathname.startsWith("/shorts/")) return parsed.pathname.split("/")[2];
+    return parsed.searchParams.get("v") || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function sortVideos(videos, sortBy, selected) {
   if (!videos) return [];
@@ -91,48 +125,375 @@ function formatViews(n) {
   return `${n} views`;
 }
 
+// ── Single-Video Download Card ─────────────────────────────────────────────────
+function VideoCard({ video, onDownload, download }) {
+  const [format, setFormat] = useState("mp4");
+  const [quality, setQuality] = useState("highest");
+
+  const status   = download?.status   || "idle";
+  const phase    = download?.phase    || "idle";
+  const progress = download?.progress || 0;
+
+  return (
+    <div className="rounded-xl border bg-card overflow-hidden">
+      {/* Thumbnail row */}
+      <div className="relative w-full aspect-video bg-muted overflow-hidden">
+        <img
+          src={video.thumbnail}
+          alt={video.title}
+          className="w-full h-full object-cover"
+          onError={(e) => { e.target.style.display = "none"; }}
+        />
+        {/* Duration badge */}
+        <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs font-mono px-1.5 py-0.5 rounded">
+          {video.duration}
+        </span>
+      </div>
+
+      {/* Info */}
+      <div className="p-4 sm:p-5 flex flex-col gap-4">
+        {/* Title + link */}
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base sm:text-lg font-semibold leading-snug">{video.title}</h2>
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href={`https://youtube.com/watch?v=${video.videoId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground hover:text-foreground shrink-0 mt-0.5"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            </TooltipTrigger>
+            <TooltipContent>Watch on YouTube</TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Meta row */}
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <User className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate max-w-[180px]">{video.author}</span>
+          </span>
+          {video.viewCountDisplay && (
+            <span className="flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5 shrink-0" />
+              {video.viewCountDisplay} views
+            </span>
+          )}
+          {video.uploadDateDisplay && (
+            <span className="flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 shrink-0" />
+              {video.uploadDateDisplay}
+            </span>
+          )}
+          <span className="flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 shrink-0" />
+            {video.duration}
+          </span>
+        </div>
+
+        {/* Tags */}
+        {video.tags?.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {video.tags.slice(0, 6).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
+              >
+                <Tag className="w-3 h-3" />
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <Separator />
+
+        {/* Download controls */}
+        <div className="flex flex-wrap items-end gap-3 sm:gap-4">
+          {/* Format */}
+          <div className="flex flex-col gap-1.5">
+            <Label>Format</Label>
+            <Tabs
+              value={format}
+              onValueChange={(v) => { setFormat(v); setQuality("highest"); }}
+            >
+              <TabsList>
+                <TabsTrigger value="mp4" className="flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5" />
+                  <span>MP4</span>
+                </TabsTrigger>
+                <TabsTrigger value="mp3" className="flex items-center gap-1.5">
+                  <Music className="w-3.5 h-3.5" />
+                  <span>MP3</span>
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          {/* Quality */}
+          <div className="flex flex-col gap-1.5 w-[160px] sm:w-[180px]">
+            <Label>Quality</Label>
+            <Select value={quality} onValueChange={setQuality}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {(format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES).map((q) => (
+                    <SelectItem key={q.value} value={q.value}>
+                      {q.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Download button */}
+          <div className="ml-auto">
+            <Button
+              onClick={() => onDownload(video.videoId, video.title, format, quality, video.durationSeconds)}
+              disabled={status === "downloading"}
+              size="default"
+              className="gap-2"
+            >
+              {status === "downloading" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : status === "done" ? (
+                <RefreshCw className="w-4 h-4" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              {status === "downloading"
+                ? `${phase === "processing" ? "Converting" : "Downloading"} ${progress}%`
+                : status === "done"
+                  ? "Download again"
+                  : "Download"}
+            </Button>
+          </div>
+        </div>
+
+        {/* Progress / status */}
+        {status === "downloading" && (
+          <Progress value={progress} className="h-1.5" />
+        )}
+        {status === "done" && (
+          <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4" /> Download complete
+          </p>
+        )}
+        {status === "error" && (
+          <p className="text-sm text-destructive flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4" /> {download.error || "Download failed"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [dark, setDark] = useTheme();
 
   const [url, setUrl] = useState("");
+  const [urlType, setUrlType] = useState(null); // 'playlist' | 'video' | null
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [playlist, setPlaylist] = useState(null);
 
+  // Playlist state
+  const [playlist, setPlaylist] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [downloads, setDownloads] = useState(new Map());
+  const [bulkDownloading, setBulkDownloading] = useState(false);
   const [format, setFormat] = useState("mp4");
   const [quality, setQuality] = useState("highest");
   const [sortBy, setSortBy] = useState("default");
   const [filter, setFilter] = useState("");
 
-  const [selected, setSelected] = useState(new Set());
-  const [downloads, setDownloads] = useState(new Map());
-  const [bulkDownloading, setBulkDownloading] = useState(false);
+  // Single-video state
+  const [videoInfo, setVideoInfo] = useState(null);
+  const [videoDownload, setVideoDownload] = useState(null);
 
-  // ── Fetch ───────────────────────────────────────────────────────────────────
-  const fetchPlaylist = useCallback(async () => {
+  // ── URL change handler ──────────────────────────────────────────────────────
+  const handleUrlChange = (val) => {
+    setUrl(val);
+    const type = detectUrlType(val);
+    setUrlType(type);
+    // Clear results when URL changes
+    if (!val.trim()) {
+      setPlaylist(null);
+      setVideoInfo(null);
+      setError(null);
+      setVideoDownload(null);
+    }
+  };
+
+  const handleClear = () => {
+    setUrl("");
+    setUrlType(null);
+    setPlaylist(null);
+    setVideoInfo(null);
+    setError(null);
+    setDownloads(new Map());
+    setVideoDownload(null);
+    setSelected(new Set());
+  };
+
+  // ── Fetch (dispatches to playlist or video based on type) ───────────────────
+  const fetchData = useCallback(async () => {
     if (!url.trim()) return;
+    const type = detectUrlType(url.trim());
+    if (!type) {
+      setError("Please enter a valid YouTube video or playlist URL.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setPlaylist(null);
+    setVideoInfo(null);
+    setVideoDownload(null);
     setSelected(new Set());
     setDownloads(new Map());
     setSortBy("default");
     setFilter("");
-    try {
-      const res = await fetch(`/api/playlist?url=${encodeURIComponent(url.trim())}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch playlist");
-      setPlaylist(data);
-      setSelected(new Set(data.videos.map((v) => v.videoId)));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+
+    if (type === "playlist") {
+      try {
+        const res = await fetch(`/api/playlist?url=${encodeURIComponent(url.trim())}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch playlist");
+        setPlaylist(data);
+        setSelected(new Set(data.videos.map((v) => v.videoId)));
+      } catch (err) {
+        setError(err.message);
+      }
+    } else {
+      try {
+        const res = await fetch(`/api/video?url=${encodeURIComponent(url.trim())}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch video");
+        setVideoInfo(data);
+      } catch (err) {
+        setError(err.message);
+      }
     }
+
+    setLoading(false);
   }, [url]);
 
-  // ── Selection ───────────────────────────────────────────────────────────────
+  // ── Download helpers ────────────────────────────────────────────────────────
+  const downloadVideo = async (videoId, title, fmt, qual, durationSeconds = 300) => {
+    const updateDl = (patch) => {
+      if (playlist) {
+        setDownloads((prev) => {
+          const next = new Map(prev);
+          const curr = next.get(videoId) || {};
+          next.set(videoId, { ...curr, ...patch });
+          return next;
+        });
+      } else {
+        setVideoDownload((prev) => ({ ...(prev || {}), ...patch }));
+      }
+    };
+
+    const getDl = () => {
+      if (playlist) return null; // handled via map
+      return null;
+    };
+
+    updateDl({ status: "downloading", phase: "processing", progress: 0 });
+
+    const formatSlowdown = fmt === "mp3" ? 2.5 : 1;
+    const k = Math.min(0.07, Math.max(0.0004, (0.014 * (300 / durationSeconds)) / formatSlowdown));
+
+    let fakeProgress = 0;
+    const fakeInterval = setInterval(() => {
+      const remaining = 85 - fakeProgress;
+      const step = Math.max(0.1, remaining * k);
+      fakeProgress = Math.min(85, fakeProgress + step);
+
+      if (playlist) {
+        setDownloads((prev) => {
+          const next = new Map(prev);
+          const curr = next.get(videoId);
+          if (curr?.phase === "processing") {
+            next.set(videoId, { ...curr, progress: Math.round(fakeProgress) });
+          }
+          return next;
+        });
+      } else {
+        setVideoDownload((prev) => {
+          if (prev?.phase === "processing") {
+            return { ...prev, progress: Math.round(fakeProgress) };
+          }
+          return prev;
+        });
+      }
+    }, 800);
+
+    try {
+      const res = await fetch(
+        `/api/download?videoId=${videoId}&format=${fmt}&quality=${qual}`
+      );
+
+      clearInterval(fakeInterval);
+
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ error: "Download failed" }));
+        throw new Error(e.error || "Download failed");
+      }
+
+      const contentLength = res.headers.get("content-length");
+      const total = contentLength ? parseInt(contentLength) : 0;
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No readable stream");
+
+      const chunks = [];
+      let received = 0;
+      const startProgress = Math.round(fakeProgress);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+
+        const streamProgress = total
+          ? Math.min(Math.round((received / total) * (99 - startProgress) + startProgress), 99)
+          : Math.min(startProgress + Math.round(received / 80000), 99);
+
+        updateDl({ phase: "streaming", progress: streamProgress });
+      }
+
+      const mimeType = fmt === "mp3" ? "audio/mpeg" : "video/mp4";
+      const ext = fmt === "mp3" ? "mp3" : "mp4";
+      const blob = new Blob(chunks, { type: mimeType });
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `${title.replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_")}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+
+      updateDl({ status: "done", phase: "done", progress: 100 });
+    } catch (err) {
+      clearInterval(fakeInterval);
+      updateDl({ status: "error", phase: "error", progress: 0, error: err.message });
+    }
+  };
+
+  // ── Playlist selection helpers ──────────────────────────────────────────────
+  const isDownloadingActive = bulkDownloading || [...downloads.values()].some((d) => d.status === "downloading");
+
   const toggleVideo = (id) => {
     if (isDownloadingActive) return;
     setSelected((prev) => {
@@ -151,105 +512,6 @@ export default function Home() {
     );
   };
 
-  // ── Download single ─────────────────────────────────────────────────────────
-  const downloadVideo = async (videoId, title) => {
-    // Find the video's duration so we can scale progress speed
-    const videoMeta = playlist?.videos.find((v) => v.videoId === videoId);
-    const durationSeconds = videoMeta?.durationSeconds || 300;
-
-    setDownloads((prev) =>
-      new Map(prev).set(videoId, { status: "downloading", phase: "processing", progress: 0 })
-    );
-
-    // Fake progress during server-side processing (yt-dlp download + ffmpeg convert).
-    // k scales with duration. MP3 also runs libmp3lame encoding, taking ~2.5x longer than
-    // MP4, so we divide k by 2.5 for mp3 to keep the bar moving at a matching pace.
-    const formatSlowdown = format === "mp3" ? 2.5 : 1;
-    const k = Math.min(0.07, Math.max(0.0004, (0.014 * (300 / durationSeconds)) / formatSlowdown));
-
-    let fakeProgress = 0;
-    const fakeInterval = setInterval(() => {
-      const remaining = 85 - fakeProgress;
-      const step = Math.max(0.1, remaining * k);
-      fakeProgress = Math.min(85, fakeProgress + step);
-      setDownloads((prev) => {
-        const next = new Map(prev);
-        const curr = next.get(videoId);
-        // Only update if still in processing phase
-        if (curr?.phase === "processing") {
-          next.set(videoId, { ...curr, progress: Math.round(fakeProgress) });
-        }
-        return next;
-      });
-    }, 800);
-
-    try {
-      const res = await fetch(
-        `/api/download?videoId=${videoId}&format=${format}&quality=${quality}`
-      );
-
-      // Server responded — stop fake progress, keep current value as starting point
-      clearInterval(fakeInterval);
-
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({ error: "Download failed" }));
-        throw new Error(e.error || "Download failed");
-      }
-
-      const contentLength = res.headers.get("content-length");
-      const total = contentLength ? parseInt(contentLength) : 0;
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No readable stream");
-
-      const chunks = [];
-      let received = 0;
-
-      // Get current fake progress as floor so bar never goes backwards
-      const startProgress = Math.round(fakeProgress);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-
-        // Map real bytes received onto the remaining range [startProgress → 99]
-        const streamProgress = total
-          ? Math.min(Math.round((received / total) * (99 - startProgress) + startProgress), 99)
-          : Math.min(startProgress + Math.round(received / 80000), 99);
-
-        setDownloads((prev) => {
-          const next = new Map(prev);
-          const curr = next.get(videoId);
-          if (curr) next.set(videoId, { ...curr, phase: "streaming", progress: streamProgress });
-          return next;
-        });
-      }
-
-      // Trigger browser save
-      const mimeType = format === "mp3" ? "audio/mpeg" : "video/mp4";
-      const ext = format === "mp3" ? "mp3" : "mp4";
-      const blob = new Blob(chunks, { type: mimeType });
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = `${title.replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_")}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(objectUrl);
-
-      setDownloads((prev) =>
-        new Map(prev).set(videoId, { status: "done", phase: "done", progress: 100 })
-      );
-    } catch (err) {
-      clearInterval(fakeInterval);
-      setDownloads((prev) =>
-        new Map(prev).set(videoId, { status: "error", phase: "error", progress: 0, error: err.message })
-      );
-    }
-  };
-
   // ── Bulk download ───────────────────────────────────────────────────────────
   const downloadSelected = async () => {
     if (!playlist || selected.size === 0 || bulkDownloading) return;
@@ -260,20 +522,18 @@ export default function Home() {
       return next;
     });
     for (const video of playlist.videos.filter((v) => selected.has(v.videoId))) {
-      await downloadVideo(video.videoId, video.title);
+      await downloadVideo(video.videoId, video.title, format, quality, video.durationSeconds);
       await new Promise((r) => setTimeout(r, 600));
     }
     setBulkDownloading(false);
-    // Reset all statuses back to idle so the UI is clean for the next run
     setDownloads(new Map());
   };
 
   // ── Derived state ───────────────────────────────────────────────────────────
   const allDl = [...downloads.values()];
-  const doneCount  = allDl.filter((d) => d.status === "done").length;
-  const errorCount = allDl.filter((d) => d.status === "error").length;
+  const doneCount   = allDl.filter((d) => d.status === "done").length;
+  const errorCount  = allDl.filter((d) => d.status === "error").length;
   const activeCount = allDl.filter((d) => d.status === "downloading").length;
-  const isDownloadingActive = bulkDownloading || activeCount > 0;
   const allSelected = playlist && selected.size === playlist.videos.length;
 
   const displayedVideos = useMemo(() => {
@@ -285,6 +545,13 @@ export default function Home() {
       v.title.toLowerCase().includes(q) || v.author.toLowerCase().includes(q)
     );
   }, [playlist, sortBy, filter, selected]);
+
+  // URL type indicator pill label
+  const typePill = urlType === "playlist"
+    ? { label: "Playlist", icon: List }
+    : urlType === "video"
+      ? { label: "Video", icon: Video }
+      : null;
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -310,38 +577,46 @@ export default function Home() {
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:py-8 flex flex-col gap-5 sm:gap-6">
 
-        {/* ── URL Input — shadcn input-group style ── */}
+        {/* ── URL Input ── */}
         <div className="flex flex-col gap-2">
-          <Label htmlFor="playlist-url">YouTube Playlist URL</Label>
-          {/* Input group: icon prefix + input + button suffix all joined */}
+          <div className="flex items-center justify-between">
+            <Label htmlFor="yt-url">YouTube URL</Label>
+            {/* Live type indicator */}
+            {typePill && (() => {
+              const Icon = typePill.icon;
+              return (
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground border rounded-full px-2 py-0.5">
+                  <Icon className="w-3 h-3" />
+                  {typePill.label} detected
+                </span>
+              );
+            })()}
+          </div>
+
           <div className="flex rounded-md border border-input ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 overflow-hidden">
-            {/* Prefix icon */}
             <div className="flex items-center px-3 bg-muted border-r border-input shrink-0">
               <Search className="w-4 h-4 text-muted-foreground" />
             </div>
-            {/* Input — no individual border/ring */}
             <input
-              id="playlist-url"
-              placeholder="https://youtube.com/playlist?list=PLxxxxxxx"
+              id="yt-url"
+              placeholder="https://youtube.com/watch?v=... or playlist?list=..."
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && fetchPlaylist()}
+              onChange={(e) => handleUrlChange(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && fetchData()}
               className="flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
-            {/* Clear button — only when there's input */}
             {url && (
               <button
-                onClick={() => { setUrl(""); setPlaylist(null); setError(null); }}
+                onClick={handleClear}
                 className="flex items-center px-2 text-muted-foreground hover:text-foreground border-l border-input bg-background transition-colors"
                 tabIndex={-1}
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
-            {/* Fetch button — joined suffix */}
             <Button
-              onClick={fetchPlaylist}
-              disabled={loading || !url.trim()}
+              onClick={fetchData}
+              disabled={loading || !url.trim() || !urlType}
               className="rounded-none rounded-r-md border-l border-input shrink-0"
             >
               {loading
@@ -352,6 +627,7 @@ export default function Home() {
               </span>
             </Button>
           </div>
+
           {error && (
             <p className="text-sm text-destructive flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4 shrink-0" /> {error}
@@ -359,7 +635,22 @@ export default function Home() {
           )}
         </div>
 
-        {/* ── Playlist ── */}
+        {/* ══════════════════════════════════════════════
+            SINGLE VIDEO MODE
+        ══════════════════════════════════════════════ */}
+        {videoInfo && !playlist && (
+          <VideoCard
+            video={videoInfo}
+            download={videoDownload}
+            onDownload={(videoId, title, fmt, qual, dur) =>
+              downloadVideo(videoId, title, fmt, qual, dur)
+            }
+          />
+        )}
+
+        {/* ══════════════════════════════════════════════
+            PLAYLIST MODE
+        ══════════════════════════════════════════════ */}
         {playlist && (
           <>
             <Separator />
@@ -396,7 +687,7 @@ export default function Home() {
                     ? `${playlist.unavailableCount} unavailable`
                     : null,
                 },
-                { icon: Clock,     label: "Total", value: playlist.totalDuration, sub: null },
+                { icon: Clock,     label: "Total", value: playlist.totalDuration,   sub: null },
                 { icon: BarChart2, label: "Avg",   value: playlist.averageDuration, sub: null },
               ].map(({ icon: Icon, label, value, sub }) => (
                 <div key={label} className="rounded-lg border bg-card p-3 sm:p-4 flex flex-col gap-1">
@@ -406,9 +697,7 @@ export default function Home() {
                   </div>
                   <p className="text-lg sm:text-2xl font-mono font-medium leading-tight">{value}</p>
                   <p className="text-xs text-muted-foreground sm:hidden">{label}</p>
-                  {sub && (
-                    <p className="text-xs text-destructive font-mono">{sub}</p>
-                  )}
+                  {sub && <p className="text-xs text-destructive font-mono">{sub}</p>}
                 </div>
               ))}
             </div>
@@ -417,24 +706,20 @@ export default function Home() {
 
             {/* Format + Quality + Download */}
             <div className="flex flex-wrap items-end gap-3 sm:gap-4">
-              {/* Format */}
               <div className="flex flex-col gap-1.5">
                 <Label>Format</Label>
                 <Tabs value={format} onValueChange={(v) => { setFormat(v); setQuality("highest"); }}>
                   <TabsList>
                     <TabsTrigger value="mp4" className="flex items-center gap-1.5">
-                      <Video className="w-3.5 h-3.5" />
-                      <span>MP4</span>
+                      <Video className="w-3.5 h-3.5" /><span>MP4</span>
                     </TabsTrigger>
                     <TabsTrigger value="mp3" className="flex items-center gap-1.5">
-                      <Music className="w-3.5 h-3.5" />
-                      <span>MP3</span>
+                      <Music className="w-3.5 h-3.5" /><span>MP3</span>
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
               </div>
 
-              {/* Quality */}
               <div className="flex flex-col gap-1.5 w-[160px] sm:w-[180px]">
                 <Label>Quality</Label>
                 <Select value={quality} onValueChange={setQuality}>
@@ -451,7 +736,6 @@ export default function Home() {
                 </Select>
               </div>
 
-              {/* Status + Download */}
               <div className="ml-auto flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
                 {(doneCount > 0 || errorCount > 0) && (
                   <div className="flex items-center gap-2 text-xs font-mono">
@@ -494,7 +778,6 @@ export default function Home() {
 
             {/* Toolbar */}
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-              {/* Select all */}
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="select-all"
@@ -502,7 +785,10 @@ export default function Home() {
                   onCheckedChange={toggleAll}
                   disabled={isDownloadingActive}
                 />
-                <Label htmlFor="select-all" className={`text-sm font-normal whitespace-nowrap ${isDownloadingActive ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+                <Label
+                  htmlFor="select-all"
+                  className={`text-sm font-normal whitespace-nowrap ${isDownloadingActive ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                >
                   {allSelected ? "Deselect all" : "Select all"}
                 </Label>
               </div>
@@ -511,7 +797,6 @@ export default function Home() {
                 {selected.size}/{playlist.videos.length}
               </span>
 
-              {/* Sort */}
               <div className="flex items-center gap-1.5">
                 <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <Select value={sortBy} onValueChange={setSortBy}>
@@ -530,7 +815,6 @@ export default function Home() {
                 </Select>
               </div>
 
-              {/* Filter */}
               <div className="ml-auto relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
                 <Input
@@ -542,7 +826,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ── Video list ── */}
+            {/* Video list */}
             <div className="rounded-lg border divide-y overflow-hidden">
               {displayedVideos.length === 0 ? (
                 <p className="text-center py-12 text-sm text-muted-foreground">
@@ -566,7 +850,6 @@ export default function Home() {
                         : "opacity-40 grayscale hover:opacity-60"
                     }`}
                   >
-                    {/* Checkbox — stop propagation so double-toggle doesn't happen */}
                     <div onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={isSelected}
@@ -574,12 +857,10 @@ export default function Home() {
                       />
                     </div>
 
-                    {/* Index */}
                     <span className="w-4 sm:w-5 text-xs text-muted-foreground text-right shrink-0 font-mono hidden sm:block">
                       {video.index}
                     </span>
 
-                    {/* Thumbnail */}
                     <div className="shrink-0 w-12 h-8 sm:w-14 sm:h-9 rounded overflow-hidden bg-muted">
                       <img
                         src={video.thumbnail}
@@ -589,7 +870,6 @@ export default function Home() {
                       />
                     </div>
 
-                    {/* Info */}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate leading-snug">{video.title}</p>
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -605,8 +885,6 @@ export default function Home() {
                           </span>
                         )}
                       </div>
-
-                      {/* Single progress bar for both processing and streaming phases */}
                       {status === "downloading" && (
                         <Progress value={dl.progress} className="h-1 mt-1.5" />
                       )}
@@ -617,12 +895,10 @@ export default function Home() {
                       )}
                     </div>
 
-                    {/* Duration */}
                     <span className="shrink-0 text-xs text-muted-foreground font-mono hidden sm:block">
                       {video.duration}
                     </span>
 
-                    {/* Status icon — only when not idle, icon only as tooltip trigger */}
                     <div className="shrink-0 w-5 flex justify-center" onClick={(e) => e.stopPropagation()}>
                       {status === "downloading" && (
                         <Tooltip>
@@ -667,20 +943,23 @@ export default function Home() {
         )}
 
         {/* ── Empty state ── */}
-        {!playlist && !loading && !error && (
+        {!playlist && !videoInfo && !loading && !error && (
           <div className="flex flex-col items-center justify-center py-20 sm:py-24 gap-4 text-center">
             <div className="rounded-full border p-4 bg-muted">
               <FlaskConical className="w-8 h-8 text-muted-foreground" />
             </div>
             <div>
-              <p className="font-medium">Paste a YouTube playlist URL to get started</p>
+              <p className="font-medium">Paste a YouTube URL to get started</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Download videos as MP4 or audio as MP3 — no API key needed.
+                Works with individual videos and full playlists — no API key needed.
               </p>
             </div>
             <div className="flex gap-2 flex-wrap justify-center">
               <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                <Video className="w-3.5 h-3.5" /> MP4 up to 1080p
+                <Video className="w-3.5 h-3.5" /> Single video
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
+                <List className="w-3.5 h-3.5" /> Full playlist
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
                 <Music className="w-3.5 h-3.5" /> MP3 up to 320kbps

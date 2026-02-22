@@ -15,6 +15,9 @@
 !bin/yt-dlp.exe
 !bin/yt-dlp_macos
 
+ALL_FILES
+commands.txt
+
 # testing
 /coverage
 
