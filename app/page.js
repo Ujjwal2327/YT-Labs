@@ -90,18 +90,28 @@ const SORT_OPTIONS = [
 ];
 
 // ── URL Type Detection ────────────────────────────────────────────────────────
+// YouTube auto-generated / Radio playlist prefixes that are unviewable as playlists.
+// URLs containing these should be treated as plain video URLs instead.
+const UNVIEWABLE_LIST_PREFIXES = ["RD", "RDMM", "RDem", "FL", "WL", "LL", "LM"];
+
+function isUnviewablePlaylist(listId) {
+  if (!listId) return false;
+  return UNVIEWABLE_LIST_PREFIXES.some((p) => listId.startsWith(p));
+}
+
 function detectUrlType(rawUrl) {
   if (!rawUrl?.trim()) return null;
   try {
     const parsed = new URL(rawUrl.trim());
     const host = parsed.hostname.replace(/^www\./, "");
-    const hasList = parsed.searchParams.has("list");
+    const listId = parsed.searchParams.get("list");
     const hasVideo = parsed.searchParams.has("v");
     if (host === "youtu.be") return "video";
     if (!["youtube.com", "m.youtube.com", "music.youtube.com"].includes(host))
       return null;
     if (parsed.pathname.startsWith("/shorts/")) return "video";
-    if (hasList) return "playlist";
+    // Treat Radio/Mix/unviewable playlists as plain videos (fall through to video check)
+    if (listId && !isUnviewablePlaylist(listId)) return "playlist";
     if (hasVideo) return "video";
     return null;
   } catch {
