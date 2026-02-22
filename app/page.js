@@ -456,6 +456,118 @@ function triggerBlobDownload(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+// ── Device-mode video info fetch ──────────────────────────────────────────────
+// Uses YouTube's public oEmbed API (no key needed) via our CORS proxy,
+// then scrapes the watch page for duration + view count.
+// Zero yt-dlp / server CPU — the proxy just forwards raw bytes.
+function extractVideoIdFromUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.hostname === "youtu.be") return parsed.pathname.slice(1).split("?")[0];
+    if (parsed.pathname.startsWith("/shorts/")) return parsed.pathname.split("/")[2];
+    return parsed.searchParams.get("v") || null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDurationISO(iso) {
+  // PT1H2M3S → seconds
+  if (!iso) return 0;
+  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!m) return 0;
+  return (parseInt(m[1] || 0) * 3600) + (parseInt(m[2] || 0) * 60) + parseInt(m[3] || 0);
+}
+
+function formatDurationSecs(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function formatViewsLocal(n) {
+  if (!n) return null;
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+async function fetchVideoInfoDeviceMode(rawUrl) {
+  const videoId = extractVideoIdFromUrl(rawUrl);
+  if (!videoId) throw new Error("Could not extract video ID from URL");
+
+  // 1. oEmbed — title + author + thumbnail_url (always works, no key needed)
+  const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+  const oembedRes = await fetch(`/api/proxy?url=${encodeURIComponent(oembedUrl)}`);
+  if (!oembedRes.ok) throw new Error(`oEmbed fetch failed (${oembedRes.status})`);
+  const oembed = await oembedRes.json();
+
+  // 2. Watch page — scrape structured data for duration + view count
+  let durationSeconds = 0;
+  let viewCount = 0;
+  let uploadDate = "";
+  let uploadDateDisplay = "";
+  let tags = [];
+
+  try {
+    const pageUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const pageRes = await fetch(`/api/proxy?url=${encodeURIComponent(pageUrl)}`);
+    if (pageRes.ok) {
+      const html = await pageRes.text();
+
+      // Pull JSON-LD structured data block
+      const ldMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+      if (ldMatch) {
+        try {
+          const ld = JSON.parse(ldMatch[1]);
+          if (ld.duration) durationSeconds = parseDurationISO(ld.duration);
+          if (ld.interactionStatistic) {
+            const stat = Array.isArray(ld.interactionStatistic)
+              ? ld.interactionStatistic.find(s => s.interactionType?.includes("WatchAction"))
+              : ld.interactionStatistic;
+            if (stat?.userInteractionCount) viewCount = parseInt(stat.userInteractionCount) || 0;
+          }
+          if (ld.uploadDate) {
+            uploadDate = ld.uploadDate.replace(/-/g, "").slice(0, 8);
+            uploadDateDisplay = ld.uploadDate.slice(0, 10);
+          }
+          if (ld.keywords) tags = ld.keywords.split(",").map(t => t.trim()).slice(0, 8);
+        } catch (_) {}
+      }
+
+      // Fallback: ytInitialData approxViewCount
+      if (!viewCount) {
+        const viewMatch = html.match(/"viewCount":"(\d+)"/);
+        if (viewMatch) viewCount = parseInt(viewMatch[1]) || 0;
+      }
+    }
+  } catch (_) {
+    // Page scrape failed — proceed with oEmbed data only
+  }
+
+  return {
+    videoId,
+    title: oembed.title || "Unknown",
+    author: oembed.author_name || "Unknown",
+    channelId: null,
+    duration: formatDurationSecs(durationSeconds),
+    durationSeconds,
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+    viewCount,
+    viewCountDisplay: formatViewsLocal(viewCount),
+    likeCount: 0,
+    uploadDate,
+    uploadDateDisplay,
+    description: "",
+    categories: [],
+    tags,
+    _deviceFetched: true, // flag so UI can show partial-data notice
+  };
+}
+
 // ── Thumbnail download ────────────────────────────────────────────────────────
 // Tries maxresdefault (1280×720) first, falls back to hqdefault (480×360).
 // Fetches via the existing CORS proxy since *.ytimg.com is already whitelisted.
@@ -487,7 +599,7 @@ async function downloadThumbnail(videoId, title) {
 }
 
 // ── Download Mode Banner ──────────────────────────────────────────────────────
-function DeviceModeBanner({ deviceMode, onToggle }) {
+function DeviceModeBanner({ deviceMode, onToggle, disabled }) {
   return (
     <div
       className={`rounded-xl border p-3 sm:p-4 flex items-start gap-3 transition-colors ${
@@ -523,8 +635,8 @@ function DeviceModeBanner({ deviceMode, onToggle }) {
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed hidden sm:block">
           {deviceMode
-            ? "Stream URLs are fetched by the server (~1s). All downloading, converting, and merging happens in your browser using ffmpeg.wasm — zero server bandwidth."
-            : "Everything runs on the server. Simple and reliable, but uses server bandwidth and CPU."}
+            ? "Video info is fetched directly from YouTube (oEmbed + page scrape) — no server involved. Stream URLs are resolved server-side (~1s), then all downloading, converting, and muxing happens in your browser via ffmpeg.wasm. Playlist metadata still requires the server."
+            : "Everything runs on the server — info fetching, downloading, and converting. Simple and reliable, but uses server bandwidth and CPU."}
         </p>
       </div>
 
@@ -532,6 +644,7 @@ function DeviceModeBanner({ deviceMode, onToggle }) {
         variant={deviceMode ? "outline" : "default"}
         size="sm"
         onClick={onToggle}
+        disabled={disabled}
         className="shrink-0 gap-1.5 text-xs"
       >
         {deviceMode ? (
@@ -549,7 +662,7 @@ function DeviceModeBanner({ deviceMode, onToggle }) {
 }
 
 // ── Single-Video Download Card ─────────────────────────────────────────────────
-function VideoCard({ video, onDownload, download }) {
+function VideoCard({ video, onDownload, download, isBusy }) {
   const [format, setFormat] = useState("mp4");
   const [quality, setQuality] = useState("highest");
   const [downloadedWith, setDownloadedWith] = useState(null);
@@ -630,6 +743,13 @@ function VideoCard({ video, onDownload, download }) {
           </span>
         </div>
 
+        {video._deviceFetched && (
+          <p className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted/40 rounded-md px-2.5 py-1.5">
+            <Cpu className="w-3 h-3 shrink-0" />
+            Info fetched client-side (oEmbed + page scrape) — no server used. Some fields may be unavailable.
+          </p>
+        )}
+
         {video.tags?.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {video.tags.slice(0, 6).map((tag) => (
@@ -652,7 +772,7 @@ function VideoCard({ video, onDownload, download }) {
             <Tabs
               value={format}
               onValueChange={(v) => {
-                if (effectiveStatus !== "downloading") {
+                if (!isBusy) {
                   setFormat(v);
                   setQuality("highest");
                 }
@@ -660,14 +780,14 @@ function VideoCard({ video, onDownload, download }) {
             >
               <TabsList
                 className={
-                  effectiveStatus === "downloading"
+                  isBusy
                     ? "opacity-50 pointer-events-none"
                     : ""
                 }
               >
                 <TabsTrigger
                   value="mp4"
-                  disabled={effectiveStatus === "downloading"}
+                  disabled={isBusy}
                   className="flex items-center gap-1.5"
                 >
                   <Video className="w-3.5 h-3.5" />
@@ -675,7 +795,7 @@ function VideoCard({ video, onDownload, download }) {
                 </TabsTrigger>
                 <TabsTrigger
                   value="mp3"
-                  disabled={effectiveStatus === "downloading"}
+                  disabled={isBusy}
                   className="flex items-center gap-1.5"
                 >
                   <Music className="w-3.5 h-3.5" />
@@ -683,7 +803,7 @@ function VideoCard({ video, onDownload, download }) {
                 </TabsTrigger>
                 <TabsTrigger
                   value="thumbnail"
-                  disabled={effectiveStatus === "downloading"}
+                  disabled={isBusy}
                   className="flex items-center gap-1.5"
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
@@ -699,7 +819,7 @@ function VideoCard({ video, onDownload, download }) {
               <Select
                 value={quality}
                 onValueChange={setQuality}
-                disabled={effectiveStatus === "downloading"}
+                disabled={isBusy}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -735,7 +855,7 @@ function VideoCard({ video, onDownload, download }) {
                   );
                 }
               }}
-              disabled={effectiveStatus === "downloading"}
+              disabled={isBusy}
               size="default"
               className="gap-2"
             >
@@ -848,6 +968,7 @@ export default function Home() {
 
     if (type === "playlist") {
       try {
+        // Playlist metadata always requires the server (yt-dlp) — no public client-side API exists.
         const res = await fetch(
           `/api/playlist?url=${encodeURIComponent(url.trim())}`,
         );
@@ -860,18 +981,25 @@ export default function Home() {
       }
     } else {
       try {
-        const res = await fetch(
-          `/api/video?url=${encodeURIComponent(url.trim())}`,
-        );
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to fetch video");
+        let data;
+        if (downloadMode === "device") {
+          // Device mode: fetch video info client-side via oEmbed + page scrape.
+          // Zero yt-dlp / server CPU — the CORS proxy just forwards raw bytes.
+          data = await fetchVideoInfoDeviceMode(url.trim());
+        } else {
+          const res = await fetch(
+            `/api/video?url=${encodeURIComponent(url.trim())}`,
+          );
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Failed to fetch video");
+        }
         setVideoInfo(data);
       } catch (err) {
         setError(err.message);
       }
     }
     setLoading(false);
-  }, [url]);
+  }, [url, downloadMode]);
 
   // ── Core download function ────────────────────────────────────────────────
   const downloadVideo = async (
@@ -1044,8 +1172,22 @@ export default function Home() {
     bulkDownloading ||
     [...downloads.values()].some((d) => d.status === "downloading");
 
+  const allDl = [...downloads.values()];
+  const doneCount = allDl.filter((d) => d.status === "done").length;
+  const errorCount = allDl.filter((d) => d.status === "error").length;
+  const activeCount = allDl.filter((d) => d.status === "downloading").length;
+  const allSelected = playlist && selected.size === playlist.videos.length;
+
+  // True whenever ANY download/fetch is in progress — gates ALL interactive controls.
+  const isBusy =
+    loading ||
+    bulkDownloading ||
+    bulkThumbDownloading ||
+    activeCount > 0 ||
+    videoDownload?.status === "downloading";
+
   const toggleVideo = (id) => {
-    if (isDownloadingActive) return;
+    if (isBusy) return;
     setSelected((prev) => {
       const n = new Set(prev);
       n.has(id) ? n.delete(id) : n.add(id);
@@ -1054,7 +1196,7 @@ export default function Home() {
   };
 
   const toggleAll = () => {
-    if (!playlist || isDownloadingActive) return;
+    if (!playlist || isBusy) return;
     setSelected(
       selected.size === playlist.videos.length
         ? new Set()
@@ -1119,20 +1261,6 @@ export default function Home() {
     setTimeout(() => setThumbDownloads(new Map()), 3000);
   };
 
-  const allDl = [...downloads.values()];
-  const doneCount = allDl.filter((d) => d.status === "done").length;
-  const errorCount = allDl.filter((d) => d.status === "error").length;
-  const activeCount = allDl.filter((d) => d.status === "downloading").length;
-  const allSelected = playlist && selected.size === playlist.videos.length;
-
-  // True whenever ANY download/fetch is in progress — gates all interactive controls.
-  const isBusy =
-    loading ||
-    bulkDownloading ||
-    bulkThumbDownloading ||
-    activeCount > 0 ||
-    videoDownload?.status === "downloading";
-
   const displayedVideos = useMemo(() => {
     if (!playlist) return [];
     const sorted = sortVideos(playlist.videos, sortBy, selected);
@@ -1166,6 +1294,7 @@ export default function Home() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setDark(!dark)}
+                disabled={isBusy}
               >
                 {dark ? (
                   <Sun className="w-4 h-4" />
@@ -1186,6 +1315,7 @@ export default function Home() {
           onToggle={() =>
             setDownloadMode((m) => (m === "server" ? "device" : "server"))
           }
+          disabled={isBusy}
         />
 
         {/* ── URL Input ── */}
@@ -1212,14 +1342,16 @@ export default function Home() {
               id="yt-url"
               placeholder="https://youtube.com/watch?v=... or playlist?list=..."
               value={url}
-              onChange={(e) => handleUrlChange(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && fetchData()}
-              className="flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none"
+              onChange={(e) => !isBusy && handleUrlChange(e.target.value)}
+              onKeyDown={(e) => !isBusy && e.key === "Enter" && fetchData()}
+              disabled={isBusy}
+              className="flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {url && (
               <button
-                onClick={handleClear}
-                className="flex items-center px-2 text-muted-foreground hover:text-foreground border-l border-input bg-background transition-colors"
+                onClick={() => !isBusy && handleClear()}
+                disabled={isBusy}
+                className="flex items-center px-2 text-muted-foreground hover:text-foreground border-l border-input bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 tabIndex={-1}
               >
                 <X className="w-3.5 h-3.5" />
@@ -1227,7 +1359,7 @@ export default function Home() {
             )}
             <Button
               onClick={fetchData}
-              disabled={loading || !url.trim() || !urlType}
+              disabled={isBusy || !url.trim() || !urlType}
               className="rounded-none rounded-r-md border-l border-input shrink-0"
             >
               {loading ? (
@@ -1253,6 +1385,7 @@ export default function Home() {
           <VideoCard
             video={videoInfo}
             download={videoDownload}
+            isBusy={isBusy}
             onDownload={(id, title, fmt, qual, dur) =>
               downloadVideo(id, title, fmt, qual, dur, false)
             }
@@ -1284,6 +1417,12 @@ export default function Home() {
                 </Tooltip>
               </div>
               <p className="text-sm text-muted-foreground">{playlist.author}</p>
+              {downloadMode === "device" && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1">
+                  <Server className="w-3 h-3 shrink-0" />
+                  Playlist metadata fetched via server (no public client-side API exists for playlists). Downloads will still run on your device.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -1464,11 +1603,11 @@ export default function Home() {
                     id="select-all"
                     checked={!!allSelected}
                     onCheckedChange={toggleAll}
-                    disabled={isDownloadingActive}
+                    disabled={isBusy}
                   />
                   <Label
                     htmlFor="select-all"
-                    className={`text-sm font-normal whitespace-nowrap ${isDownloadingActive ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                    className={`text-sm font-normal whitespace-nowrap ${isBusy ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                   >
                     {allSelected ? "Deselect all" : "Select all"}
                   </Label>
@@ -1479,7 +1618,7 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-1.5">
                 <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <Select value={sortBy} onValueChange={setSortBy}>
+                <Select value={sortBy} onValueChange={setSortBy} disabled={isBusy}>
                   <SelectTrigger className="h-8 w-32.5 sm:w-38.75 text-xs">
                     <SelectValue />
                   </SelectTrigger>
@@ -1503,7 +1642,8 @@ export default function Home() {
                 <Input
                   placeholder="Filter..."
                   value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
+                  onChange={(e) => !isBusy && setFilter(e.target.value)}
+                  disabled={isBusy}
                   className="pl-8 h-8 w-full sm:w-40 text-sm"
                 />
               </div>
@@ -1525,12 +1665,13 @@ export default function Home() {
                     <div
                       key={video.videoId}
                       onClick={() => toggleVideo(video.videoId)}
-                      className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 transition-all select-none ${isDownloadingActive ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "bg-background hover:bg-muted/40" : "opacity-40 grayscale hover:opacity-60"}`}
+                      className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 transition-all select-none ${isBusy ? "cursor-not-allowed" : "cursor-pointer"} ${isSelected ? "bg-background hover:bg-muted/40" : "opacity-40 grayscale hover:opacity-60"}`}
                     >
                       <div onClick={(e) => e.stopPropagation()}>
                         <Checkbox
                           checked={isSelected}
                           onCheckedChange={() => toggleVideo(video.videoId)}
+                          disabled={isBusy}
                         />
                       </div>
                       <span className="w-4 sm:w-5 text-xs text-muted-foreground text-right shrink-0 font-mono hidden sm:block">
