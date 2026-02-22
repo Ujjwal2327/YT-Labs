@@ -40,6 +40,22 @@ function cleanup(...files) {
 }
 
 export async function GET(req) {
+  // Vercel Hobby plan caps all functions at 60s regardless of maxDuration.
+  // Server-mode downloads (which need 2-5min for large files) will always
+  // timeout on Vercel. Tell the user to switch to Device Mode instead.
+  if (process.env.VERCEL) {
+    return NextResponse.json(
+      {
+        error:
+          "Server-mode download is not supported on Vercel due to execution time limits. " +
+          "Please switch to Device Mode — it downloads and converts entirely in your browser " +
+          "with no server timeout.",
+        vercelLimitError: true,
+      },
+      { status: 503 }
+    );
+  }
+
   const { searchParams } = req.nextUrl;
   const videoId = searchParams.get("videoId");
   const format  = searchParams.get("format")  || "mp4";
@@ -54,7 +70,6 @@ export async function GET(req) {
   const uid       = randomUUID();
   const youtubeDl = await getYtDlp();
 
-  // No extractorArgs = yt-dlp default web client → full DASH access (4K, VP9, AV1, HDR).
   const baseOpts = {
     quiet:      true,
     noWarnings: true,
@@ -143,9 +158,6 @@ export async function GET(req) {
         output:            mp4Path,
         mergeOutputFormat: "mp4",
         ffmpegLocation:    ffmpegInstaller.path,
-        // Safety net: if fallback audio is opus (not AAC), re-encode it to AAC.
-        // This prevents "Stream #1:0 -> #0:1 (copy)" errors when muxing opus into mp4.
-        // Video is always stream-copied — zero quality loss.
         postprocessorArgs: "ffmpeg:-c:v copy -c:a aac -b:a 192k",
         ...baseOpts,
       })

@@ -988,6 +988,9 @@ export default function Home() {
 
       if (!res.ok) {
         const e = await res.json().catch(() => ({ error: "Download failed" }));
+        if (e.vercelLimitError) {
+          throw new Error("Server Mode is unavailable on Vercel — please switch to Device Mode (the toggle at the top).");
+        }
         throw new Error(e.error || "Download failed");
       }
 

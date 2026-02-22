@@ -15,7 +15,7 @@ import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Device mode format selectors.
 // Capped at 1080p. Prefers h264 (avc1) for smaller size + browser compat.
@@ -41,11 +41,12 @@ export async function GET(req) {
 
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
-  // No extractorArgs = yt-dlp default web client → full DASH format listing.
   const baseOpts = {
     quiet:      true,
     noWarnings: true,
   };
+
+  const isVercel = !!process.env.VERCEL;
 
   try {
     const youtubeDl = await getYtDlp();
@@ -54,12 +55,16 @@ export async function GET(req) {
       ? "bestaudio[ext=m4a]/bestaudio/best"
       : DEVICE_VIDEO_FORMAT_MAP[quality] || DEVICE_VIDEO_FORMAT_MAP.highest;
 
+    const retries = isVercel ? 1 : 3;
+
     const [infoRaw, urlsRaw] = await Promise.all([
       withRetry(() =>
-        youtubeDl(videoUrl, { dumpSingleJson: true, format: selectedFormat, ...baseOpts })
+        youtubeDl(videoUrl, { dumpSingleJson: true, format: selectedFormat, ...baseOpts }),
+        retries, 1000
       ),
       withRetry(() =>
-        youtubeDl(videoUrl, { getUrl: true, format: selectedFormat, ...baseOpts })
+        youtubeDl(videoUrl, { getUrl: true, format: selectedFormat, ...baseOpts }),
+        retries, 1000
       ),
     ]);
 

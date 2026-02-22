@@ -1,7 +1,10 @@
 {
   "functions": {
-    "app/api/playlist/route.js": { "maxDuration": 60 },
-    "app/api/download/route.js": { "maxDuration": 300 }
+    "app/api/playlist/route.js":   { "maxDuration": 60 },
+    "app/api/video/route.js":      { "maxDuration": 60 },
+    "app/api/stream-url/route.js": { "maxDuration": 60 },
+    "app/api/proxy/route.js":      { "maxDuration": 300 },
+    "app/api/download/route.js":   { "maxDuration": 300 }
   },
-  "buildCommand": "node scripts/download-ytdlp.js && next build"
+  "buildCommand": "node scripts/download-ytdlp.js && chmod +x bin/yt-dlp 2>/dev/null || true && next build"
 }

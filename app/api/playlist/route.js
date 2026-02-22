@@ -97,21 +97,33 @@ export async function GET(req) {
   try {
     const youtubeDl = await getYtDlp();
 
-    const data = await withRetry(() =>
-      youtubeDl(`https://www.youtube.com/playlist?list=${playlistId}`, {
-        dumpSingleJson: true,
-        flatPlaylist: true,
-        ignoreErrors: true,
-        quiet: true,
-        noWarnings: true,
-        extractorArgs: "youtube:player_client=ios,android",
-      })
+    // Use flat-playlist with no-warnings for maximum speed.
+    // Avoid extractorArgs ios/android on Vercel — it adds overhead and
+    // flat-playlist doesn't need video stream info anyway.
+    // Only 1 retry on Vercel to stay within the 60s window.
+    const isVercel = !!process.env.VERCEL;
+
+    const data = await withRetry(
+      () =>
+        youtubeDl(`https://www.youtube.com/playlist?list=${playlistId}`, {
+          dumpSingleJson: true,
+          flatPlaylist: true,
+          ignoreErrors: true,
+          quiet: true,
+          noWarnings: true,
+          // On Vercel skip extractor args — saves ~1–2s per call and flat-playlist
+          // doesn't need them (no stream formats requested).
+          ...(isVercel ? {} : { extractorArgs: "youtube:player_client=ios,android" }),
+        }),
+      isVercel ? 1 : 3,  // fewer retries on Vercel to avoid timeout
+      1000
     );
 
     return NextResponse.json(buildResponse(data, playlistId));
   } catch (err) {
     console.error("Playlist fetch error:", err);
 
+    // If yt-dlp wrote partial JSON to stdout before failing, try to use it
     if (err.stdout) {
       try {
         const data = JSON.parse(err.stdout);
