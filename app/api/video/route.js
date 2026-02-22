@@ -9,6 +9,7 @@ function extractVideoId(url) {
   try {
     const parsed = new URL(url);
     if (parsed.hostname === "youtu.be") return parsed.pathname.slice(1).split("?")[0];
+    if (parsed.pathname.startsWith("/shorts/")) return parsed.pathname.split("/")[2] || null;
     return parsed.searchParams.get("v") || null;
   } catch {
     return null;
