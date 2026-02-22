@@ -487,7 +487,7 @@ async function downloadThumbnail(videoId, title) {
 }
 
 // ── Download Mode Banner ──────────────────────────────────────────────────────
-function DeviceModeBanner({ deviceMode, onToggle }) {
+function DeviceModeBanner({ deviceMode, onToggle, disabled = false }) {
   return (
     <div
       className={`rounded-xl border p-3 sm:p-4 flex items-start gap-3 transition-colors ${
@@ -523,7 +523,7 @@ function DeviceModeBanner({ deviceMode, onToggle }) {
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed hidden sm:block">
           {deviceMode
-            ? "Stream URLs are fetched by the server (~1s). All downloading, converting, and merging happens in your browser using ffmpeg.wasm — zero server bandwidth."
+            ? "Server fetches stream URLs only. All processing happens in your browser — zero server bandwidth."
             : "Everything runs on the server. Simple and reliable, but uses server bandwidth and CPU."}
         </p>
       </div>
@@ -532,6 +532,7 @@ function DeviceModeBanner({ deviceMode, onToggle }) {
         variant={deviceMode ? "outline" : "default"}
         size="sm"
         onClick={onToggle}
+        disabled={disabled}
         className="shrink-0 gap-1.5 text-xs"
       >
         {deviceMode ? (
@@ -549,7 +550,7 @@ function DeviceModeBanner({ deviceMode, onToggle }) {
 }
 
 // ── Single-Video Download Card ─────────────────────────────────────────────────
-function VideoCard({ video, onDownload, download }) {
+function VideoCard({ video, onDownload, download, globallyBusy = false }) {
   const [format, setFormat] = useState("mp4");
   const [quality, setQuality] = useState("highest");
   const [downloadedWith, setDownloadedWith] = useState(null);
@@ -568,6 +569,9 @@ function VideoCard({ video, onDownload, download }) {
     downloadedWith &&
     (downloadedWith.format !== format || downloadedWith.quality !== quality);
   const effectiveStatus = selectionChanged ? "idle" : status;
+
+  // Lock all controls when this card is busy OR when a global operation is running
+  const isLocked = globallyBusy || effectiveStatus === "downloading";
 
   return (
     <div className="rounded-xl border bg-card overflow-hidden">
@@ -652,22 +656,18 @@ function VideoCard({ video, onDownload, download }) {
             <Tabs
               value={format}
               onValueChange={(v) => {
-                if (effectiveStatus !== "downloading") {
+                if (!isLocked) {
                   setFormat(v);
                   setQuality("highest");
                 }
               }}
             >
               <TabsList
-                className={
-                  effectiveStatus === "downloading"
-                    ? "opacity-50 pointer-events-none"
-                    : ""
-                }
+                className={isLocked ? "opacity-50 pointer-events-none" : ""}
               >
                 <TabsTrigger
                   value="mp4"
-                  disabled={effectiveStatus === "downloading"}
+                  disabled={isLocked}
                   className="flex items-center gap-1.5"
                 >
                   <Video className="w-3.5 h-3.5" />
@@ -675,7 +675,7 @@ function VideoCard({ video, onDownload, download }) {
                 </TabsTrigger>
                 <TabsTrigger
                   value="mp3"
-                  disabled={effectiveStatus === "downloading"}
+                  disabled={isLocked}
                   className="flex items-center gap-1.5"
                 >
                   <Music className="w-3.5 h-3.5" />
@@ -683,7 +683,7 @@ function VideoCard({ video, onDownload, download }) {
                 </TabsTrigger>
                 <TabsTrigger
                   value="thumbnail"
-                  disabled={effectiveStatus === "downloading"}
+                  disabled={isLocked}
                   className="flex items-center gap-1.5"
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
@@ -699,7 +699,7 @@ function VideoCard({ video, onDownload, download }) {
               <Select
                 value={quality}
                 onValueChange={setQuality}
-                disabled={effectiveStatus === "downloading"}
+                disabled={isLocked}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -735,7 +735,7 @@ function VideoCard({ video, onDownload, download }) {
                   );
                 }
               }}
-              disabled={effectiveStatus === "downloading"}
+              disabled={isLocked}
               size="default"
               className="gap-2"
             >
@@ -801,6 +801,8 @@ export default function Home() {
   const [quality, setQuality] = useState("highest");
   const [sortBy, setSortBy] = useState("default");
   const [filter, setFilter] = useState("");
+  // Persists done/error summary after bulk download finishes, until user acts.
+  const [completedSummary, setCompletedSummary] = useState(null); // { done, error } | null
 
   const [videoInfo, setVideoInfo] = useState(null);
   const [videoDownload, setVideoDownload] = useState(null);
@@ -826,6 +828,7 @@ export default function Home() {
     setDownloads(new Map());
     setVideoDownload(null);
     setSelected(new Set());
+    setCompletedSummary(null);
   };
 
   const fetchData = useCallback(async () => {
@@ -845,6 +848,7 @@ export default function Home() {
     setDownloads(new Map());
     setSortBy("default");
     setFilter("");
+    setCompletedSummary(null);
 
     if (type === "playlist") {
       try {
@@ -1046,6 +1050,7 @@ export default function Home() {
 
   const toggleVideo = (id) => {
     if (isDownloadingActive) return;
+    setCompletedSummary(null);
     setSelected((prev) => {
       const n = new Set(prev);
       n.has(id) ? n.delete(id) : n.add(id);
@@ -1055,6 +1060,7 @@ export default function Home() {
 
   const toggleAll = () => {
     if (!playlist || isDownloadingActive) return;
+    setCompletedSummary(null);
     setSelected(
       selected.size === playlist.videos.length
         ? new Set()
@@ -1064,13 +1070,15 @@ export default function Home() {
 
   const downloadSelected = async () => {
     if (!playlist || selected.size === 0 || bulkDownloading) return;
+    setCompletedSummary(null);
     setBulkDownloading(true);
-    setDownloads((prev) => {
-      const n = new Map(prev);
-      for (const id of selected)
-        n.set(id, { status: "idle", phase: "idle", progress: 0 });
-      return n;
-    });
+    // Switch to "selected first" so active downloads float to top; restore after.
+    const prevSortBy = sortBy;
+    setSortBy("selected");
+    const initialMap = new Map();
+    for (const id of selected)
+      initialMap.set(id, { status: "idle", phase: "idle", progress: 0 });
+    setDownloads(initialMap);
     for (const video of playlist.videos.filter((v) =>
       selected.has(v.videoId),
     )) {
@@ -1084,13 +1092,29 @@ export default function Home() {
       );
       await new Promise((r) => setTimeout(r, 600));
     }
+    // Capture final counts + per-video statuses before clearing the map
+    setDownloads((prev) => {
+      const allVals = [...prev.values()];
+      const videos = new Map(
+        [...prev.entries()].map(([id, d]) => [id, { status: d.status, error: d.error }])
+      );
+      setCompletedSummary({
+        done: allVals.filter((d) => d.status === "done").length,
+        error: allVals.filter((d) => d.status === "error").length,
+        videos,
+      });
+      return new Map();
+    });
     setBulkDownloading(false);
-    setDownloads(new Map());
+    setSortBy(prevSortBy);
   };
 
   const downloadSelectedThumbnails = async () => {
     if (!playlist || selected.size === 0 || bulkThumbDownloading) return;
     setBulkThumbDownloading(true);
+    // Switch to "selected first" so active downloads float to top; restore after.
+    const prevSortBy = sortBy;
+    setSortBy("selected");
     for (const video of playlist.videos.filter((v) =>
       selected.has(v.videoId),
     )) {
@@ -1117,6 +1141,7 @@ export default function Home() {
     }
     setBulkThumbDownloading(false);
     setTimeout(() => setThumbDownloads(new Map()), 3000);
+    setSortBy(prevSortBy);
   };
 
   const allDl = [...downloads.values()];
@@ -1166,6 +1191,7 @@ export default function Home() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setDark(!dark)}
+                disabled={isBusy}
               >
                 {dark ? (
                   <Sun className="w-4 h-4" />
@@ -1183,6 +1209,7 @@ export default function Home() {
         {/* ── Download Mode Banner ── */}
         <DeviceModeBanner
           deviceMode={downloadMode === "device"}
+          disabled={isBusy}
           onToggle={() =>
             setDownloadMode((m) => (m === "server" ? "device" : "server"))
           }
@@ -1212,14 +1239,16 @@ export default function Home() {
               id="yt-url"
               placeholder="https://youtube.com/watch?v=... or playlist?list=..."
               value={url}
-              onChange={(e) => handleUrlChange(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && fetchData()}
-              className="flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none"
+              onChange={(e) => !isBusy && handleUrlChange(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !isBusy && fetchData()}
+              disabled={isBusy}
+              className={`flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none${isBusy ? " opacity-50 cursor-not-allowed" : ""}`}
             />
             {url && (
               <button
-                onClick={handleClear}
-                className="flex items-center px-2 text-muted-foreground hover:text-foreground border-l border-input bg-background transition-colors"
+                onClick={!isBusy ? handleClear : undefined}
+                disabled={isBusy}
+                className={`flex items-center px-2 border-l border-input bg-background transition-colors${isBusy ? " opacity-50 cursor-not-allowed text-muted-foreground" : " text-muted-foreground hover:text-foreground"}`}
                 tabIndex={-1}
               >
                 <X className="w-3.5 h-3.5" />
@@ -1227,7 +1256,7 @@ export default function Home() {
             )}
             <Button
               onClick={fetchData}
-              disabled={loading || !url.trim() || !urlType}
+              disabled={isBusy || loading || !url.trim() || !urlType}
               className="rounded-none rounded-r-md border-l border-input shrink-0"
             >
               {loading ? (
@@ -1253,6 +1282,7 @@ export default function Home() {
           <VideoCard
             video={videoInfo}
             download={videoDownload}
+            globallyBusy={isBusy}
             onDownload={(id, title, fmt, qual, dur) =>
               downloadVideo(id, title, fmt, qual, dur, false)
             }
@@ -1342,6 +1372,7 @@ export default function Home() {
                     if (!isBusy) {
                       setFormat(v);
                       setQuality("highest");
+                      setCompletedSummary(null);
                     }
                   }}
                 >
@@ -1381,7 +1412,7 @@ export default function Home() {
                   <Label>Quality</Label>
                   <Select
                     value={quality}
-                    onValueChange={setQuality}
+                    onValueChange={(v) => { setQuality(v); setCompletedSummary(null); }}
                     disabled={isBusy}
                   >
                     <SelectTrigger>
@@ -1403,25 +1434,26 @@ export default function Home() {
               )}
 
               <div className="ml-auto flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
-                {(doneCount > 0 || errorCount > 0) &&
+                {/* During download: show live progress counts. After: show frozen summary until user acts. */}
+                {((doneCount > 0 || errorCount > 0) || completedSummary) &&
                   format !== "thumbnail" && (
                     <div className="flex items-center gap-2 text-xs font-mono">
-                      {doneCount > 0 && (
+                      {(completedSummary ? completedSummary.done : doneCount) > 0 && (
                         <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">
-                            {doneCount} done
+                            {completedSummary ? completedSummary.done : doneCount} done
                           </span>
-                          <span className="sm:hidden">{doneCount}</span>
+                          <span className="sm:hidden">{completedSummary ? completedSummary.done : doneCount}</span>
                         </span>
                       )}
-                      {errorCount > 0 && (
+                      {(completedSummary ? completedSummary.error : errorCount) > 0 && (
                         <span className="flex items-center gap-1 text-destructive">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">
-                            {errorCount} failed
+                            {completedSummary ? completedSummary.error : errorCount} failed
                           </span>
-                          <span className="sm:hidden">{errorCount}</span>
+                          <span className="sm:hidden">{completedSummary ? completedSummary.error : errorCount}</span>
                         </span>
                       )}
                     </div>
@@ -1479,7 +1511,7 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-1.5">
                 <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <Select value={sortBy} onValueChange={setSortBy}>
+                <Select value={sortBy} onValueChange={(v) => { setSortBy(v); setCompletedSummary(null); }} disabled={isBusy}>
                   <SelectTrigger className="h-8 w-32.5 sm:w-38.75 text-xs">
                     <SelectValue />
                   </SelectTrigger>
@@ -1503,7 +1535,8 @@ export default function Home() {
                 <Input
                   placeholder="Filter..."
                   value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
+                  onChange={(e) => { setFilter(e.target.value); setCompletedSummary(null); }}
+                  disabled={isBusy}
                   className="pl-8 h-8 w-full sm:w-40 text-sm"
                 />
               </div>
@@ -1516,7 +1549,10 @@ export default function Home() {
                 </p>
               ) : (
                 displayedVideos.map((video) => {
-                  const dl = downloads.get(video.videoId);
+                  const dl = downloads.get(video.videoId)
+                    ?? (completedSummary?.videos?.get(video.videoId)
+                        ? { ...completedSummary.videos.get(video.videoId), progress: 0, phase: "idle", log: "" }
+                        : undefined);
                   const status = dl?.status || "idle";
                   const phase = dl?.phase || "idle";
                   const isSelected = selected.has(video.videoId);
