@@ -1,5 +1,5 @@
 // 📁 app/api/video/route.js
-import { getYtDlp, getCookiePath } from "@/lib/ytdlp";
+import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -42,14 +42,15 @@ export async function GET(req) {
 
   try {
     const youtubeDl = await getYtDlp();
-    const cookiePath = getCookiePath();
 
-    const info = await youtubeDl(`https://www.youtube.com/watch?v=${videoId}`, {
-      dumpSingleJson: true,
-      quiet: true,
-      noWarnings: true,
-      ...(cookiePath && { cookies: cookiePath }),
-    });
+    const info = await withRetry(() =>
+      youtubeDl(`https://www.youtube.com/watch?v=${videoId}`, {
+        dumpSingleJson: true,
+        quiet: true,
+        noWarnings: true,
+        extractorArgs: "youtube:player_client=ios,android",
+      })
+    );
 
     const raw = info.upload_date || "";
     const uploadDateDisplay =
@@ -57,7 +58,6 @@ export async function GET(req) {
         ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
         : "";
 
-    // Pick best thumbnail
     const thumbs = info.thumbnails || [];
     const bestThumb =
       thumbs.find((t) => t.id === "maxresdefault")?.url ||

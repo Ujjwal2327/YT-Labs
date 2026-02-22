@@ -1,5 +1,5 @@
 // 📁 app/api/playlist/route.js
-import { getYtDlp, getCookiePath } from "@/lib/ytdlp";
+import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -96,26 +96,22 @@ export async function GET(req) {
 
   try {
     const youtubeDl = await getYtDlp();
-    const cookiePath = getCookiePath();
 
-    const data = await youtubeDl(
-      `https://www.youtube.com/playlist?list=${playlistId}`,
-      {
+    const data = await withRetry(() =>
+      youtubeDl(`https://www.youtube.com/playlist?list=${playlistId}`, {
         dumpSingleJson: true,
         flatPlaylist: true,
         ignoreErrors: true,
         quiet: true,
         noWarnings: true,
-        // Pass cookies if available (needed on cloud servers to bypass bot detection)
-        ...(cookiePath && { cookies: cookiePath }),
-      }
+        extractorArgs: "youtube:player_client=ios,android",
+      })
     );
 
     return NextResponse.json(buildResponse(data, playlistId));
   } catch (err) {
     console.error("Playlist fetch error:", err);
 
-    // yt-dlp exited non-zero but still wrote JSON to stdout — use the partial data
     if (err.stdout) {
       try {
         const data = JSON.parse(err.stdout);

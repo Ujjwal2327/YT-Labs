@@ -1,5 +1,5 @@
 // 📁 app/api/download/route.js
-import { getYtDlp, getCookiePath } from "@/lib/ytdlp";
+import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffmpeg from "fluent-ffmpeg";
 import { NextResponse } from "next/server";
@@ -48,25 +48,21 @@ export async function GET(req) {
   const tmpDir = os.tmpdir();
   const uid = randomUUID();
 
-  // Resolve binary once (cached after first call)
   const youtubeDl = await getYtDlp();
-  const cookiePath = getCookiePath();
 
   // Shared extra options applied to every yt-dlp call
   const baseOpts = {
     quiet: true,
     noWarnings: true,
-    // Pass cookies if available (needed on cloud servers to bypass bot detection)
-    ...(cookiePath && { cookies: cookiePath }),
+    extractorArgs: "youtube:player_client=ios,android",
   };
 
   // Fetch title (best-effort)
   let safeName = `media_${videoId}`;
   try {
-    const info = await youtubeDl(videoUrl, {
-      dumpSingleJson: true,
-      ...baseOpts,
-    });
+    const info = await withRetry(() =>
+      youtubeDl(videoUrl, { dumpSingleJson: true, ...baseOpts })
+    );
     safeName = (info.title || safeName)
       .replace(/[^\w\s\-]/g, "")
       .trim()
@@ -80,11 +76,13 @@ export async function GET(req) {
     const mp3Path = path.join(tmpDir, `${uid}.mp3`);
 
     try {
-      await youtubeDl(videoUrl, {
-        format: "bestaudio/best",
-        output: rawAudioPath + ".%(ext)s",
-        ...baseOpts,
-      });
+      await withRetry(() =>
+        youtubeDl(videoUrl, {
+          format: "bestaudio/best",
+          output: rawAudioPath + ".%(ext)s",
+          ...baseOpts,
+        })
+      );
 
       const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(`${uid}_audio`));
       if (!files.length) throw new Error("yt-dlp did not produce an audio file");
@@ -135,13 +133,15 @@ export async function GET(req) {
     const ytFormat = VIDEO_FORMAT_MAP[quality] || VIDEO_FORMAT_MAP.highest;
 
     try {
-      await youtubeDl(videoUrl, {
-        format: ytFormat,
-        output: mp4Path,
-        mergeOutputFormat: "mp4",
-        ffmpegLocation: ffmpegInstaller.path,
-        ...baseOpts,
-      });
+      await withRetry(() =>
+        youtubeDl(videoUrl, {
+          format: ytFormat,
+          output: mp4Path,
+          mergeOutputFormat: "mp4",
+          ffmpegLocation: ffmpegInstaller.path,
+          ...baseOpts,
+        })
+      );
 
       if (!fs.existsSync(mp4Path)) throw new Error("yt-dlp did not produce a video file");
 
