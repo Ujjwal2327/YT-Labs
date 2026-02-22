@@ -1674,28 +1674,35 @@ export default function Home() {
 
         {/* ── Empty state ── */}
         {!playlist && !videoInfo && !loading && !error && (
-          <div className="flex flex-col items-center justify-center py-20 sm:py-24 gap-4 text-center">
-            <div className="rounded-full border p-4 bg-muted">
-              <FlaskConical className="w-8 h-8 text-muted-foreground" />
+          <div className="flex flex-col items-center text-center gap-6 py-16 sm:py-20">
+            <div className="rounded-2xl border bg-muted/50 p-4">
+              <FlaskConical className="w-8 h-8 text-primary" />
             </div>
-            <div>
-              <p className="font-medium">Paste a YouTube URL to get started</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Works with individual videos and full playlists — no API key
-                needed.
+
+            <div className="flex flex-col gap-1.5">
+              <p className="font-semibold text-lg">Download YouTube videos &amp; playlists</p>
+              <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
+                Paste a video or playlist URL above. No API key, no sign-up.
               </p>
             </div>
-            <div className="flex gap-2 flex-wrap justify-center">
-              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                <Video className="w-3.5 h-3.5" /> Single video
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                <List className="w-3.5 h-3.5" /> Full playlist
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                <Music className="w-3.5 h-3.5" /> MP3 up to 320kbps
-              </span>
+
+            <div className="grid grid-cols-3 gap-2 w-full max-w-sm">
+              {[
+                { icon: Video, label: "MP4", sub: "Up to 4K" },
+                { icon: Music, label: "MP3", sub: "Up to 320kbps" },
+                { icon: ImageIcon, label: "Thumbnail", sub: "Max resolution" },
+              ].map(({ icon: Icon, label, sub }) => (
+                <div key={label} className="rounded-xl border bg-card p-3 flex flex-col items-center gap-1.5">
+                  <Icon className="w-4 h-4 text-muted-foreground" />
+                  <p className="text-xs font-medium">{label}</p>
+                  <p className="text-xs text-muted-foreground">{sub}</p>
+                </div>
+              ))}
             </div>
+
+            <p className="text-xs text-muted-foreground">
+              Works with single videos, playlists, and shorts
+            </p>
           </div>
         )}
       </main>
