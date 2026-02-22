@@ -58,11 +58,6 @@ export async function GET(req) {
       dumpSingleJson: true,
       quiet: true,
       noWarnings: true,
-      addHeader: [
-        "referer:youtube.com",
-        "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      ],
-      extractorArgs: "youtube:player_client=web,web_embedded",
     });
     safeName = (info.title || safeName)
       .replace(/[^\w\s\-]/g, "")
@@ -82,11 +77,6 @@ export async function GET(req) {
         output: rawAudioPath + ".%(ext)s",
         quiet: true,
         noWarnings: true,
-        addHeader: [
-          "referer:youtube.com",
-          "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ],
-        extractorArgs: "youtube:player_client=web,web_embedded",
       });
 
       const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(`${uid}_audio`));
@@ -145,11 +135,6 @@ export async function GET(req) {
         quiet: true,
         noWarnings: true,
         ffmpegLocation: ffmpegInstaller.path,
-        addHeader: [
-          "referer:youtube.com",
-          "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ],
-        extractorArgs: "youtube:player_client=web,web_embedded",
       });
 
       if (!fs.existsSync(mp4Path)) throw new Error("yt-dlp did not produce a video file");
