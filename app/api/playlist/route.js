@@ -1,5 +1,4 @@
 // 📁 app/api/playlist/route.js
-import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -37,7 +36,7 @@ function isAvailable(entry) {
   return true;
 }
 
-function buildResponse(data, playlistId) {
+function buildResponseFromYtDlp(data, playlistId) {
   const allEntries = data.entries || [];
   const entries = allEntries.filter(isAvailable);
   const unavailableCount = allEntries.length - entries.length;
@@ -94,40 +93,45 @@ export async function GET(req) {
     );
   }
 
+  // ── Vercel: use pure-JS innertube API (no binary needed) ──────────────────
+  if (process.env.VERCEL) {
+    try {
+      const { getPlaylistInfo } = await import("@/lib/ytdlp-vercel");
+      const data = await getPlaylistInfo(playlistId);
+      return NextResponse.json(data);
+    } catch (err) {
+      console.error("Playlist fetch error (innertube):", err);
+      return NextResponse.json(
+        { error: err?.message || "Failed to fetch playlist" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // ── Railway / local: use yt-dlp binary ────────────────────────────────────
   try {
+    const { getYtDlp, withRetry } = await import("@/lib/ytdlp");
     const youtubeDl = await getYtDlp();
 
-    // Use flat-playlist with no-warnings for maximum speed.
-    // Avoid extractorArgs ios/android on Vercel — it adds overhead and
-    // flat-playlist doesn't need video stream info anyway.
-    // Only 1 retry on Vercel to stay within the 60s window.
-    const isVercel = !!process.env.VERCEL;
-
-    const data = await withRetry(
-      () =>
-        youtubeDl(`https://www.youtube.com/playlist?list=${playlistId}`, {
-          dumpSingleJson: true,
-          flatPlaylist: true,
-          ignoreErrors: true,
-          quiet: true,
-          noWarnings: true,
-          // On Vercel skip extractor args — saves ~1–2s per call and flat-playlist
-          // doesn't need them (no stream formats requested).
-          ...(isVercel ? {} : { extractorArgs: "youtube:player_client=ios,android" }),
-        }),
-      isVercel ? 1 : 3,  // fewer retries on Vercel to avoid timeout
-      1000
+    const data = await withRetry(() =>
+      youtubeDl(`https://www.youtube.com/playlist?list=${playlistId}`, {
+        dumpSingleJson: true,
+        flatPlaylist: true,
+        ignoreErrors: true,
+        quiet: true,
+        noWarnings: true,
+        extractorArgs: "youtube:player_client=ios,android",
+      })
     );
 
-    return NextResponse.json(buildResponse(data, playlistId));
+    return NextResponse.json(buildResponseFromYtDlp(data, playlistId));
   } catch (err) {
     console.error("Playlist fetch error:", err);
 
-    // If yt-dlp wrote partial JSON to stdout before failing, try to use it
     if (err.stdout) {
       try {
         const data = JSON.parse(err.stdout);
-        return NextResponse.json(buildResponse(data, playlistId));
+        return NextResponse.json(buildResponseFromYtDlp(data, playlistId));
       } catch (_) {}
     }
 

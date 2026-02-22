@@ -1,25 +1,19 @@
 // 📁 app/api/stream-url/route.js
-// Returns direct YouTube CDN stream URLs extracted by yt-dlp for device-mode downloads.
+// Returns direct YouTube CDN stream URLs for device-mode downloads.
+//
+// On Vercel: uses @distube/ytdl-core (pure JS, no binary).
+// On Railway/local: uses yt-dlp binary (better quality, 4K support).
 //
 // DEVICE MODE CONSTRAINTS:
-//  ffmpeg.wasm runs in the browser and buffers entire streams in RAM before muxing.
-//  A 4K/AV1 video can be 2-4GB — impossible to allocate in a browser ArrayBuffer.
-//  So device mode is hard-capped at 1080p and prefers h264 (avc1) over VP9/AV1:
-//    - h264 files are ~2-4x smaller than AV1 at equivalent quality
-//    - ffmpeg.wasm's single-threaded WASM core handles h264 much faster
-//    - Stays well under browser memory limits (~500MB practical ceiling)
-//
-// Server mode has no such limit — use that for 4K/highest quality.
+//  ffmpeg.wasm runs in the browser and buffers entire streams in RAM.
+//  Hard-capped at 1080p. Prefers h264 (avc1) for smaller size + browser compat.
 
-import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Device mode format selectors.
-// Capped at 1080p. Prefers h264 (avc1) for smaller size + browser compat.
-// Falls back to any codec if h264 not available at that resolution.
+// yt-dlp format selectors (Railway/local only)
 const DEVICE_VIDEO_FORMAT_MAP = {
   highest: "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
   "1080p": "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
@@ -39,32 +33,39 @@ export async function GET(req) {
     return NextResponse.json({ error: "Missing videoId" }, { status: 400 });
   }
 
+  // ── Vercel: use pure-JS ytdl-core (no binary needed) ──────────────────────
+  if (process.env.VERCEL) {
+    try {
+      const { getStreamUrls } = await import("@/lib/ytdlp-vercel");
+      const result = await getStreamUrls(videoId, format, quality);
+      return NextResponse.json(result);
+    } catch (err) {
+      console.error("stream-url error (ytdl-core):", err);
+      return NextResponse.json(
+        { error: err?.message || "Failed to extract stream URL" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // ── Railway / local: use yt-dlp binary ────────────────────────────────────
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-  const baseOpts = {
-    quiet:      true,
-    noWarnings: true,
-  };
-
-  const isVercel = !!process.env.VERCEL;
+  const baseOpts = { quiet: true, noWarnings: true };
 
   try {
+    const { getYtDlp, withRetry } = await import("@/lib/ytdlp");
     const youtubeDl = await getYtDlp();
 
     const selectedFormat = format === "mp3"
       ? "bestaudio[ext=m4a]/bestaudio/best"
       : DEVICE_VIDEO_FORMAT_MAP[quality] || DEVICE_VIDEO_FORMAT_MAP.highest;
 
-    const retries = isVercel ? 1 : 3;
-
     const [infoRaw, urlsRaw] = await Promise.all([
       withRetry(() =>
-        youtubeDl(videoUrl, { dumpSingleJson: true, format: selectedFormat, ...baseOpts }),
-        retries, 1000
+        youtubeDl(videoUrl, { dumpSingleJson: true, format: selectedFormat, ...baseOpts })
       ),
       withRetry(() =>
-        youtubeDl(videoUrl, { getUrl: true, format: selectedFormat, ...baseOpts }),
-        retries, 1000
+        youtubeDl(videoUrl, { getUrl: true, format: selectedFormat, ...baseOpts })
       ),
     ]);
 
@@ -84,7 +85,6 @@ export async function GET(req) {
       return NextResponse.json({ error: "No stream URLs found" }, { status: 500 });
     }
 
-    // Determine actual container extensions for ffmpeg.wasm demuxing
     let videoExt = "mp4";
     let audioExt = "m4a";
 
@@ -101,12 +101,11 @@ export async function GET(req) {
 
     const resolvedAudioExt = format === "mp3" ? (infoRaw.ext || audioExt) : audioExt;
 
-    // Log selected streams for debugging
     if (infoRaw.requested_formats) {
       const vf = infoRaw.requested_formats[0];
       const af = infoRaw.requested_formats[1];
-      console.log(`[stream-url device] video: ${vf?.height}p ${vf?.vcodec} ext=${vf?.ext}`);
-      console.log(`[stream-url device] audio: ${af?.abr}kbps ${af?.acodec} ext=${af?.ext}`);
+      console.log(`[stream-url] video: ${vf?.height}p ${vf?.vcodec} ext=${vf?.ext}`);
+      console.log(`[stream-url] audio: ${af?.abr}kbps ${af?.acodec} ext=${af?.ext}`);
     }
 
     return NextResponse.json({

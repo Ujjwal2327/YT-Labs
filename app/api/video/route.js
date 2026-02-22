@@ -1,9 +1,8 @@
 // 📁 app/api/video/route.js
-import { getYtDlp, withRetry } from "@/lib/ytdlp";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function extractVideoId(url) {
   try {
@@ -41,7 +40,24 @@ export async function GET(req) {
   if (!videoId)
     return NextResponse.json({ error: "Invalid video URL — must contain a video ID" }, { status: 400 });
 
+  // ── Vercel: use pure-JS ytdl-core (no binary needed) ──────────────────────
+  if (process.env.VERCEL) {
+    try {
+      const { getVideoInfo } = await import("@/lib/ytdlp-vercel");
+      const info = await getVideoInfo(videoId);
+      return NextResponse.json(info);
+    } catch (err) {
+      console.error("Video fetch error (ytdl-core):", err);
+      return NextResponse.json(
+        { error: err?.message || "Failed to fetch video info" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // ── Railway / local: use yt-dlp binary ────────────────────────────────────
   try {
+    const { getYtDlp, withRetry } = await import("@/lib/ytdlp");
     const youtubeDl = await getYtDlp();
 
     const info = await withRetry(() =>
