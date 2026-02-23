@@ -159,9 +159,11 @@ function isFSASupported() {
 
 /** Detects Brave by checking the brave object injected into navigator */
 function isBrave() {
-  return typeof navigator !== "undefined" &&
+  return (
+    typeof navigator !== "undefined" &&
     // @ts-ignore
-    (navigator.brave != null || navigator.userAgent.includes("Brave"));
+    (navigator.brave != null || navigator.userAgent.includes("Brave"))
+  );
 }
 
 /**
@@ -171,12 +173,16 @@ function isBrave() {
  */
 async function testFSAWritable(dirHandle) {
   try {
-    const testFile = await dirHandle.getFileHandle("__ytlabs_test__", { create: true });
+    const testFile = await dirHandle.getFileHandle("__ytlabs_test__", {
+      create: true,
+    });
     const w = await testFile.createWritable();
     await w.write(new Uint8Array([0]));
     await w.close();
     // Clean up
-    try { await dirHandle.removeEntry("__ytlabs_test__"); } catch (_) {}
+    try {
+      await dirHandle.removeEntry("__ytlabs_test__");
+    } catch (_) {}
     return true;
   } catch {
     return false;
@@ -235,7 +241,8 @@ async function saveBlob(blob, filename, dirHandle, conflictMode) {
     return { saved: true, skipped: false, fsaFailed: true };
   }
 
-  if (finalName === null) return { saved: false, skipped: true, fsaFailed: false };
+  if (finalName === null)
+    return { saved: false, skipped: true, fsaFailed: false };
 
   try {
     const fh = await dirHandle.getFileHandle(finalName, { create: true });
@@ -260,7 +267,10 @@ async function getFFmpeg(onLog) {
   if (ffmpegLoading) {
     await new Promise((r) => {
       const check = setInterval(() => {
-        if (ffmpegReady) { clearInterval(check); r(); }
+        if (ffmpegReady) {
+          clearInterval(check);
+          r();
+        }
       }, 100);
     });
     return ffmpegInstance;
@@ -278,7 +288,10 @@ async function getFFmpeg(onLog) {
     const baseUrl = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
     await ffmpegInstance.load({
       coreURL: await toBlobURL(`${baseUrl}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${baseUrl}/ffmpeg-core.wasm`, "application/wasm"),
+      wasmURL: await toBlobURL(
+        `${baseUrl}/ffmpeg-core.wasm`,
+        "application/wasm",
+      ),
     });
 
     ffmpegReady = true;
@@ -292,7 +305,12 @@ async function getFFmpeg(onLog) {
 }
 
 // ── Device-mode download helpers ──────────────────────────────────────────────
-async function fetchViaCorsProxy(cdnUrl, onProgress, progressStart = 0, progressEnd = 100) {
+async function fetchViaCorsProxy(
+  cdnUrl,
+  onProgress,
+  progressStart = 0,
+  progressEnd = 100,
+) {
   const proxyUrl = `/api/proxy?url=${encodeURIComponent(cdnUrl)}`;
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error(`Proxy error ${res.status}`);
@@ -309,19 +327,33 @@ async function fetchViaCorsProxy(cdnUrl, onProgress, progressStart = 0, progress
     received += value.length;
     if (onProgress) {
       const p = total
-        ? progressStart + Math.round((received / total) * (progressEnd - progressStart))
-        : Math.min(progressStart + Math.round(received / 50000), progressEnd - 5);
+        ? progressStart +
+          Math.round((received / total) * (progressEnd - progressStart))
+        : Math.min(
+            progressStart + Math.round(received / 50000),
+            progressEnd - 5,
+          );
       onProgress(p);
     }
   }
 
   const all = new Uint8Array(received);
   let offset = 0;
-  for (const chunk of chunks) { all.set(chunk, offset); offset += chunk.length; }
+  for (const chunk of chunks) {
+    all.set(chunk, offset);
+    offset += chunk.length;
+  }
   return all;
 }
 
-async function deviceModeMP3(streamInfo, quality, title, onProgress, onLog, dlSettings) {
+async function deviceModeMP3(
+  streamInfo,
+  quality,
+  title,
+  onProgress,
+  onLog,
+  dlSettings,
+) {
   const bitrateMap = { highest: "320k", medium: "192k", low: "128k" };
   const bitrate = bitrateMap[quality] || "192k";
   const audioUrl = streamInfo.url;
@@ -342,16 +374,38 @@ async function deviceModeMP3(streamInfo, quality, title, onProgress, onLog, dlSe
   onProgress?.(55);
 
   onLog?.(`Converting to MP3 (${bitrate}) on your device…`);
-  await ff.exec(["-i", inputName, "-codec:a", "libmp3lame", "-b:a", bitrate, "-y", outputName]);
+  await ff.exec([
+    "-i",
+    inputName,
+    "-codec:a",
+    "libmp3lame",
+    "-b:a",
+    bitrate,
+    "-y",
+    outputName,
+  ]);
   onProgress?.(90);
 
   const mp3Data = await ff.readFile(outputName);
   const blob = new Blob([mp3Data.buffer], { type: "audio/mpeg" });
-  const safeName = title.replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_").slice(0, 100);
-  const result = await saveBlob(blob, `${safeName}.mp3`, dlSettings?.dirHandle, dlSettings?.conflictMode);
+  const safeName = title
+    .replace(/[^\w\s\-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 100);
+  const result = await saveBlob(
+    blob,
+    `${safeName}.mp3`,
+    dlSettings?.dirHandle,
+    dlSettings?.conflictMode,
+  );
 
-  try { await ff.deleteFile(inputName); } catch {}
-  try { await ff.deleteFile(outputName); } catch {}
+  try {
+    await ff.deleteFile(inputName);
+  } catch {}
+  try {
+    await ff.deleteFile(outputName);
+  } catch {}
 
   onProgress?.(100);
   onLog?.(result.skipped ? "Skipped — file already exists." : "Done!");
@@ -359,7 +413,11 @@ async function deviceModeMP3(streamInfo, quality, title, onProgress, onLog, dlSe
 }
 
 async function deviceModeMP4(streamInfo, title, onProgress, onLog, dlSettings) {
-  const safeName = title.replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_").slice(0, 100);
+  const safeName = title
+    .replace(/[^\w\s\-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 100);
 
   if (streamInfo.streamType === "dual") {
     onLog?.("Fetching video + audio streams in parallel…");
@@ -372,8 +430,24 @@ async function deviceModeMP4(streamInfo, title, onProgress, onLog, dlSettings) {
     };
 
     const [videoBytes, audioBytes] = await Promise.all([
-      fetchViaCorsProxy(streamInfo.videoUrl, (p) => { videoProgress = p; updateProgress(); }, 0, 100),
-      fetchViaCorsProxy(streamInfo.audioUrl, (p) => { audioProgress = p; updateProgress(); }, 0, 100),
+      fetchViaCorsProxy(
+        streamInfo.videoUrl,
+        (p) => {
+          videoProgress = p;
+          updateProgress();
+        },
+        0,
+        100,
+      ),
+      fetchViaCorsProxy(
+        streamInfo.audioUrl,
+        (p) => {
+          audioProgress = p;
+          updateProgress();
+        },
+        0,
+        100,
+      ),
     ]);
 
     onProgress?.(72);
@@ -388,23 +462,52 @@ async function deviceModeMP4(streamInfo, title, onProgress, onLog, dlSettings) {
 
     await ff.writeFile(videoIn, videoBytes);
     await ff.writeFile(audioIn, audioBytes);
-    await ff.exec(["-i", videoIn, "-i", audioIn, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", "-y", "out.mp4"]);
+    await ff.exec([
+      "-i",
+      videoIn,
+      "-i",
+      audioIn,
+      "-c:v",
+      "copy",
+      "-c:a",
+      "copy",
+      "-movflags",
+      "+faststart",
+      "-y",
+      "out.mp4",
+    ]);
     onProgress?.(94);
 
     const mp4Data = await ff.readFile("out.mp4");
     const blob = new Blob([mp4Data.buffer], { type: "video/mp4" });
-    const result = await saveBlob(blob, `${safeName}.mp4`, dlSettings?.dirHandle, dlSettings?.conflictMode);
+    const result = await saveBlob(
+      blob,
+      `${safeName}.mp4`,
+      dlSettings?.dirHandle,
+      dlSettings?.conflictMode,
+    );
 
-    try { await ff.deleteFile(videoIn); } catch {}
-    try { await ff.deleteFile(audioIn); } catch {}
-    try { await ff.deleteFile("out.mp4"); } catch {}
+    try {
+      await ff.deleteFile(videoIn);
+    } catch {}
+    try {
+      await ff.deleteFile(audioIn);
+    } catch {}
+    try {
+      await ff.deleteFile("out.mp4");
+    } catch {}
 
     onProgress?.(100);
     onLog?.(result.skipped ? "Skipped — file already exists." : "Done!");
     return result;
   } else {
     onLog?.("Fetching video stream…");
-    const bytes = await fetchViaCorsProxy(streamInfo.url, (p) => onProgress?.(5 + Math.round(p * 0.62)), 0, 100);
+    const bytes = await fetchViaCorsProxy(
+      streamInfo.url,
+      (p) => onProgress?.(5 + Math.round(p * 0.62)),
+      0,
+      100,
+    );
 
     onProgress?.(68);
     onLog?.("Remuxing into MP4…");
@@ -415,15 +518,33 @@ async function deviceModeMP4(streamInfo, title, onProgress, onLog, dlSettings) {
     const inputName = `sin.${ext}`;
 
     await ff.writeFile(inputName, bytes);
-    await ff.exec(["-i", inputName, "-c", "copy", "-movflags", "+faststart", "-y", "out.mp4"]);
+    await ff.exec([
+      "-i",
+      inputName,
+      "-c",
+      "copy",
+      "-movflags",
+      "+faststart",
+      "-y",
+      "out.mp4",
+    ]);
     onProgress?.(94);
 
     const mp4Data = await ff.readFile("out.mp4");
     const blob = new Blob([mp4Data.buffer], { type: "video/mp4" });
-    const result = await saveBlob(blob, `${safeName}.mp4`, dlSettings?.dirHandle, dlSettings?.conflictMode);
+    const result = await saveBlob(
+      blob,
+      `${safeName}.mp4`,
+      dlSettings?.dirHandle,
+      dlSettings?.conflictMode,
+    );
 
-    try { await ff.deleteFile(inputName); } catch {}
-    try { await ff.deleteFile("out.mp4"); } catch {}
+    try {
+      await ff.deleteFile(inputName);
+    } catch {}
+    try {
+      await ff.deleteFile("out.mp4");
+    } catch {}
 
     onProgress?.(100);
     onLog?.(result.skipped ? "Skipped — file already exists." : "Done!");
@@ -444,7 +565,10 @@ function triggerBlobDownload(blob, filename) {
 
 async function downloadThumbnail(videoId, title, dlSettings) {
   const safeName = (title || videoId)
-    .replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_").slice(0, 100);
+    .replace(/[^\w\s\-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 100);
 
   const candidates = [
     `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
@@ -458,7 +582,12 @@ async function downloadThumbnail(videoId, title, dlSettings) {
       if (!res.ok) continue;
       const blob = await res.blob();
       if (blob.size < 5000) continue;
-      const result = await saveBlob(blob, `${safeName}_thumbnail.jpg`, dlSettings?.dirHandle, dlSettings?.conflictMode);
+      const result = await saveBlob(
+        blob,
+        `${safeName}_thumbnail.jpg`,
+        dlSettings?.dirHandle,
+        dlSettings?.conflictMode,
+      );
       return result;
     } catch (_) {}
   }
@@ -466,11 +595,21 @@ async function downloadThumbnail(videoId, title, dlSettings) {
 }
 
 // ── Download Settings Modal ───────────────────────────────────────────────────
-function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, downloadCount = 1 }) {
+function DownloadSettingsModal({
+  open,
+  onConfirm,
+  onCancel,
+  initialSettings,
+  downloadCount = 1,
+}) {
   const fsaSupported = isFSASupported();
   const brave = typeof window !== "undefined" && isBrave();
-  const [dirHandle, setDirHandle] = useState(initialSettings?.dirHandle || null);
-  const [conflictMode, setConflictMode] = useState(initialSettings?.conflictMode || "skip");
+  const [dirHandle, setDirHandle] = useState(
+    initialSettings?.dirHandle || null,
+  );
+  const [conflictMode, setConflictMode] = useState(
+    initialSettings?.conflictMode || "skip",
+  );
   const [pickError, setPickError] = useState(null);
   // null = untested, true = writable, false = blocked
   const [fsaWritable, setFsaWritable] = useState(null);
@@ -502,7 +641,7 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
         setPickError(
           brave
             ? "Brave Shields is blocking file writes. Disable Shields for this site (or use Chrome). Files will download normally instead."
-            : "Your browser blocked file writes to this folder. Files will download to your Downloads folder instead."
+            : "Your browser blocked file writes to this folder. Files will download to your Downloads folder instead.",
         );
       }
     } catch (e) {
@@ -514,7 +653,7 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
       setPickError(
         brave
           ? "Brave Shields blocked folder access. Try disabling Shields for this site, or use Chrome for folder selection."
-          : `Could not access folder: ${e.message || e.name}. Files will download normally.`
+          : `Could not access folder: ${e.message || e.name}. Files will download normally.`,
       );
     }
     setPicking(false);
@@ -558,9 +697,12 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
               <Settings2 className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold leading-tight">Download Settings</h2>
+              <h2 className="text-sm font-semibold leading-tight">
+                Download Settings
+              </h2>
               <p className="text-xs text-muted-foreground">
-                {downloadCount === 1 ? "1 file" : `${downloadCount} files`} to download
+                {downloadCount === 1 ? "1 file" : `${downloadCount} files`} to
+                download
               </p>
             </div>
           </div>
@@ -588,19 +730,21 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
                     picking
                       ? "border-border opacity-60 cursor-not-allowed"
                       : dirHandle && fsaWritable
-                      ? "border-primary/40 bg-primary/5 hover:bg-primary/10"
-                      : dirHandle && fsaWritable === false
-                        ? "border-yellow-500/40 bg-yellow-500/5 hover:bg-yellow-500/10"
-                        : "border-dashed border-border hover:border-primary/40 hover:bg-muted/50"
+                        ? "border-primary/40 bg-primary/5 hover:bg-primary/10"
+                        : dirHandle && fsaWritable === false
+                          ? "border-yellow-500/40 bg-yellow-500/5 hover:bg-yellow-500/10"
+                          : "border-dashed border-border hover:border-primary/40 hover:bg-muted/50"
                   }`}
                 >
-                  <div className={`p-1.5 rounded-lg shrink-0 ${
-                    dirHandle && fsaWritable
-                      ? "bg-primary/15"
-                      : dirHandle && fsaWritable === false
-                        ? "bg-yellow-500/15"
-                        : "bg-muted"
-                  }`}>
+                  <div
+                    className={`p-1.5 rounded-lg shrink-0 ${
+                      dirHandle && fsaWritable
+                        ? "bg-primary/15"
+                        : dirHandle && fsaWritable === false
+                          ? "bg-yellow-500/15"
+                          : "bg-muted"
+                    }`}
+                  >
                     {dirHandle && fsaWritable ? (
                       <FolderOpen className="w-4 h-4 text-primary" />
                     ) : dirHandle && fsaWritable === false ? (
@@ -612,12 +756,18 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
                   <div className="flex-1 min-w-0">
                     {picking ? (
                       <>
-                        <p className="text-sm font-medium">Waiting for folder selection…</p>
-                        <p className="text-xs text-muted-foreground">Choose a folder in the dialog</p>
+                        <p className="text-sm font-medium">
+                          Waiting for folder selection…
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Choose a folder in the dialog
+                        </p>
                       </>
                     ) : dirHandle ? (
                       <>
-                        <p className="text-sm font-medium truncate">{dirHandle.name}</p>
+                        <p className="text-sm font-medium truncate">
+                          {dirHandle.name}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {fsaWritable === false
                             ? "Write blocked — files go to Downloads instead"
@@ -627,14 +777,17 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
                     ) : (
                       <>
                         <p className="text-sm font-medium">Choose a folder</p>
-                        <p className="text-xs text-muted-foreground">Select where files will be saved</p>
+                        <p className="text-xs text-muted-foreground">
+                          Select where files will be saved
+                        </p>
                       </>
                     )}
                   </div>
-                  {picking
-                    ? <Loader2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 animate-spin" />
-                    : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  }
+                  {picking ? (
+                    <Loader2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 animate-spin" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  )}
                 </button>
 
                 {pickError && (
@@ -647,14 +800,16 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
                 {!dirHandle && brave && (
                   <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                     <Info className="w-3 h-3 shrink-0 mt-0.5" />
-                    Brave detected — folder selection may require disabling Shields for this site.
+                    Brave detected — folder selection may require disabling
+                    Shields for this site.
                   </p>
                 )}
 
                 {!dirHandle && !brave && (
                   <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                     <Info className="w-3 h-3 shrink-0 mt-0.5" />
-                    No folder selected — files will download to your browser's default Downloads folder.
+                    No folder selected — files will download to your browser's
+                    default Downloads folder.
                   </p>
                 )}
               </div>
@@ -662,7 +817,8 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
               <div className="rounded-xl border bg-muted/50 px-4 py-3 flex items-start gap-2.5">
                 <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Folder selection requires Chrome or Edge. Files will download to your browser's default Downloads folder.
+                  Folder selection requires Chrome or Edge. Files will download
+                  to your browser's default Downloads folder.
                 </p>
               </div>
             )}
@@ -685,19 +841,31 @@ function DownloadSettingsModal({ open, onConfirm, onCancel, initialSettings, dow
                         : "border-border hover:border-border/70 hover:bg-muted/40"
                     }`}
                   >
-                    <div className={`p-1 rounded-md shrink-0 ${conflictMode === value ? "bg-primary/15" : "bg-muted"}`}>
-                      <Icon className={`w-3.5 h-3.5 ${conflictMode === value ? "text-primary" : "text-muted-foreground"}`} />
+                    <div
+                      className={`p-1 rounded-md shrink-0 ${conflictMode === value ? "bg-primary/15" : "bg-muted"}`}
+                    >
+                      <Icon
+                        className={`w-3.5 h-3.5 ${conflictMode === value ? "text-primary" : "text-muted-foreground"}`}
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${conflictMode === value ? "text-foreground" : "text-foreground/80"}`}>
+                      <p
+                        className={`text-sm font-medium ${conflictMode === value ? "text-foreground" : "text-foreground/80"}`}
+                      >
                         {label}
                       </p>
                       <p className="text-xs text-muted-foreground">{desc}</p>
                     </div>
-                    <div className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
-                      conflictMode === value ? "border-primary bg-primary" : "border-border"
-                    }`}>
-                      {conflictMode === value && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    <div
+                      className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
+                        conflictMode === value
+                          ? "border-primary bg-primary"
+                          : "border-border"
+                      }`}
+                    >
+                      {conflictMode === value && (
+                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                      )}
                     </div>
                   </button>
                 ))}
@@ -736,7 +904,9 @@ function DeviceModeBanner({ deviceMode, onToggle, disabled = false }) {
           : "bg-muted/30 border-border"
       }`}
     >
-      <div className={`mt-0.5 p-1.5 rounded-md shrink-0 ${deviceMode ? "bg-primary/10" : "bg-muted"}`}>
+      <div
+        className={`mt-0.5 p-1.5 rounded-md shrink-0 ${deviceMode ? "bg-primary/10" : "bg-muted"}`}
+      >
         {deviceMode ? (
           <Cpu className="w-4 h-4 text-primary" />
         ) : (
@@ -774,9 +944,13 @@ function DeviceModeBanner({ deviceMode, onToggle, disabled = false }) {
         className="shrink-0 gap-1.5 text-xs"
       >
         {deviceMode ? (
-          <><Server className="w-3 h-3" /> Use Server</>
+          <>
+            <Server className="w-3 h-3" /> Use Server
+          </>
         ) : (
-          <><Cpu className="w-3 h-3" /> Use My Device</>
+          <>
+            <Cpu className="w-3 h-3" /> Use My Device
+          </>
         )}
       </Button>
     </div>
@@ -813,7 +987,9 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
           src={video.thumbnail}
           alt={video.title}
           className="w-full h-full object-cover"
-          onError={(e) => { e.target.style.display = "none"; }}
+          onError={(e) => {
+            e.target.style.display = "none";
+          }}
         />
         <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs font-mono px-1.5 py-0.5 rounded">
           {video.duration}
@@ -823,7 +999,9 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
       <div className="p-4 sm:p-5 flex flex-col gap-4">
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
-            <h2 className="text-base sm:text-lg font-semibold leading-snug">{video.title}</h2>
+            <h2 className="text-base sm:text-lg font-semibold leading-snug">
+              {video.title}
+            </h2>
           </div>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -885,18 +1063,38 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
             <Tabs
               value={format}
               onValueChange={(v) => {
-                if (!isLocked) { setFormat(v); setQuality("highest"); }
+                if (!isLocked) {
+                  setFormat(v);
+                  setQuality("highest");
+                }
               }}
             >
-              <TabsList className={isLocked ? "opacity-50 pointer-events-none" : ""}>
-                <TabsTrigger value="mp4" disabled={isLocked} className="flex items-center gap-1.5">
-                  <Video className="w-3.5 h-3.5" /><span>MP4</span>
+              <TabsList
+                className={isLocked ? "opacity-50 pointer-events-none" : ""}
+              >
+                <TabsTrigger
+                  value="mp4"
+                  disabled={isLocked}
+                  className="flex items-center gap-1.5"
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  <span>MP4</span>
                 </TabsTrigger>
-                <TabsTrigger value="mp3" disabled={isLocked} className="flex items-center gap-1.5">
-                  <Music className="w-3.5 h-3.5" /><span>MP3</span>
+                <TabsTrigger
+                  value="mp3"
+                  disabled={isLocked}
+                  className="flex items-center gap-1.5"
+                >
+                  <Music className="w-3.5 h-3.5" />
+                  <span>MP3</span>
                 </TabsTrigger>
-                <TabsTrigger value="thumbnail" disabled={isLocked} className="flex items-center gap-1.5">
-                  <ImageIcon className="w-3.5 h-3.5" /><span>JPG</span>
+                <TabsTrigger
+                  value="thumbnail"
+                  disabled={isLocked}
+                  className="flex items-center gap-1.5"
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>JPG</span>
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -905,13 +1103,23 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
           {format !== "thumbnail" && (
             <div className="flex flex-col gap-1.5 w-40 sm:w-45">
               <Label>Quality</Label>
-              <Select value={quality} onValueChange={setQuality} disabled={isLocked}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select
+                value={quality}
+                onValueChange={setQuality}
+                disabled={isLocked}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    {(format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES).map((q) => (
-                      <SelectItem key={q.value} value={q.value}>{q.label}</SelectItem>
-                    ))}
+                    {(format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES).map(
+                      (q) => (
+                        <SelectItem key={q.value} value={q.value}>
+                          {q.label}
+                        </SelectItem>
+                      ),
+                    )}
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -922,7 +1130,13 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
             <Button
               onClick={() => {
                 setDownloadedWith(null);
-                onDownload(video.videoId, video.title, format, quality, video.durationSeconds);
+                onDownload(
+                  video.videoId,
+                  video.title,
+                  format,
+                  quality,
+                  video.durationSeconds,
+                );
               }}
               disabled={isLocked}
               size="default"
@@ -947,7 +1161,9 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
         {effectiveStatus === "downloading" && (
           <>
             <Progress value={progress} className="h-1.5" />
-            {log && <p className="text-xs text-muted-foreground font-mono">{log}</p>}
+            {log && (
+              <p className="text-xs text-muted-foreground font-mono">{log}</p>
+            )}
           </>
         )}
         {effectiveStatus === "done" && (
@@ -957,7 +1173,8 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
         )}
         {effectiveStatus === "error" && (
           <p className="text-sm text-destructive flex items-center gap-1.5">
-            <AlertTriangle className="w-4 h-4" /> {download.error || "Download failed"}
+            <AlertTriangle className="w-4 h-4" />{" "}
+            {download.error || "Download failed"}
           </p>
         )}
       </div>
@@ -1068,7 +1285,9 @@ export default function Home() {
 
     if (type === "playlist") {
       try {
-        const res = await fetch(`/api/playlist?url=${encodeURIComponent(url.trim())}`);
+        const res = await fetch(
+          `/api/playlist?url=${encodeURIComponent(url.trim())}`,
+        );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to fetch playlist");
         setPlaylist(data);
@@ -1078,7 +1297,9 @@ export default function Home() {
       }
     } else {
       try {
-        const res = await fetch(`/api/video?url=${encodeURIComponent(url.trim())}`);
+        const res = await fetch(
+          `/api/video?url=${encodeURIComponent(url.trim())}`,
+        );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to fetch video");
         setVideoInfo(data);
@@ -1111,7 +1332,12 @@ export default function Home() {
       }
     };
 
-    updateDl({ status: "downloading", phase: "processing", progress: 0, log: "" });
+    updateDl({
+      status: "downloading",
+      phase: "processing",
+      progress: 0,
+      log: "",
+    });
 
     // ── Device mode ───────────────────────────────────────────────────────────
     if (downloadMode === "device") {
@@ -1122,7 +1348,12 @@ export default function Home() {
           updateDl({ phase: "streaming", progress: 20 });
           const result = await downloadThumbnail(videoId, title, dlSettings);
           if (result?.skipped) {
-            updateDl({ status: "done", phase: "done", progress: 100, log: "Skipped — file already exists." });
+            updateDl({
+              status: "done",
+              phase: "done",
+              progress: 100,
+              log: "Skipped — file already exists.",
+            });
           } else {
             updateDl({ status: "done", phase: "done", progress: 100, log: "" });
           }
@@ -1133,9 +1364,13 @@ export default function Home() {
           `/api/stream-url?videoId=${videoId}&format=${fmt}&quality=${qual}`,
         );
         const streamInfo = await res.json();
-        if (!res.ok) throw new Error(streamInfo.error || "Failed to get stream URL");
+        if (!res.ok)
+          throw new Error(streamInfo.error || "Failed to get stream URL");
 
-        updateDl({ progress: 8, log: "Stream URL obtained — your device takes over from here." });
+        updateDl({
+          progress: 8,
+          log: "Stream URL obtained — your device takes over from here.",
+        });
 
         const onProgress = (p) => updateDl({ progress: p });
         const onLog = (msg) => updateDl({ log: msg });
@@ -1143,10 +1378,23 @@ export default function Home() {
         let result;
         if (fmt === "mp3") {
           updateDl({ phase: "converting" });
-          result = await deviceModeMP3(streamInfo, qual, title, onProgress, onLog, dlSettings);
+          result = await deviceModeMP3(
+            streamInfo,
+            qual,
+            title,
+            onProgress,
+            onLog,
+            dlSettings,
+          );
         } else {
           updateDl({ phase: "streaming" });
-          result = await deviceModeMP4(streamInfo, title, onProgress, onLog, dlSettings);
+          result = await deviceModeMP4(
+            streamInfo,
+            title,
+            onProgress,
+            onLog,
+            dlSettings,
+          );
         }
 
         updateDl({
@@ -1158,7 +1406,13 @@ export default function Home() {
         });
       } catch (err) {
         console.error("Device mode download error:", err);
-        updateDl({ status: "error", phase: "error", progress: 0, error: err.message, log: "" });
+        updateDl({
+          status: "error",
+          phase: "error",
+          progress: 0,
+          error: err.message,
+          log: "",
+        });
       }
       return;
     }
@@ -1169,18 +1423,31 @@ export default function Home() {
         updateDl({ phase: "streaming", progress: 20 });
         const result = await downloadThumbnail(videoId, title, dlSettings);
         if (result?.skipped) {
-          updateDl({ status: "done", phase: "done", progress: 100, log: "Skipped — file already exists." });
+          updateDl({
+            status: "done",
+            phase: "done",
+            progress: 100,
+            log: "Skipped — file already exists.",
+          });
         } else {
           updateDl({ status: "done", phase: "done", progress: 100, log: "" });
         }
       } catch (err) {
-        updateDl({ status: "error", phase: "error", progress: 0, error: err.message });
+        updateDl({
+          status: "error",
+          phase: "error",
+          progress: 0,
+          error: err.message,
+        });
       }
       return;
     }
 
     const formatSlowdown = fmt === "mp3" ? 2.5 : 1;
-    const k = Math.min(0.07, Math.max(0.0004, (0.014 * (300 / durationSeconds)) / formatSlowdown));
+    const k = Math.min(
+      0.07,
+      Math.max(0.0004, (0.014 * (300 / durationSeconds)) / formatSlowdown),
+    );
     let fakeProgress = 0;
 
     const fakeInterval = setInterval(() => {
@@ -1190,24 +1457,31 @@ export default function Home() {
         setDownloads((prev) => {
           const n = new Map(prev);
           const cur = n.get(videoId);
-          if (cur?.phase === "processing") n.set(videoId, { ...cur, progress: Math.round(fakeProgress) });
+          if (cur?.phase === "processing")
+            n.set(videoId, { ...cur, progress: Math.round(fakeProgress) });
           return n;
         });
       } else {
         setVideoDownload((prev) =>
-          prev?.phase === "processing" ? { ...prev, progress: Math.round(fakeProgress) } : prev,
+          prev?.phase === "processing"
+            ? { ...prev, progress: Math.round(fakeProgress) }
+            : prev,
         );
       }
     }, 800);
 
     try {
-      const res = await fetch(`/api/download?videoId=${videoId}&format=${fmt}&quality=${qual}`);
+      const res = await fetch(
+        `/api/download?videoId=${videoId}&format=${fmt}&quality=${qual}`,
+      );
       clearInterval(fakeInterval);
 
       if (!res.ok) {
         const e = await res.json().catch(() => ({ error: "Download failed" }));
         if (e.vercelLimitError) {
-          throw new Error("Server Mode is unavailable on Vercel — please switch to Device Mode.");
+          throw new Error(
+            "Server Mode is unavailable on Vercel — please switch to Device Mode.",
+          );
         }
         throw new Error(e.error || "Download failed");
       }
@@ -1227,7 +1501,12 @@ export default function Home() {
         chunks.push(value);
         received += value.length;
         const sp = total
-          ? Math.min(Math.round((received / total) * (99 - startProgress) + startProgress), 99)
+          ? Math.min(
+              Math.round(
+                (received / total) * (99 - startProgress) + startProgress,
+              ),
+              99,
+            )
           : Math.min(startProgress + Math.round(received / 80000), 99);
         updateDl({ phase: "streaming", progress: sp });
       }
@@ -1235,9 +1514,18 @@ export default function Home() {
       const mimeType = fmt === "mp3" ? "audio/mpeg" : "video/mp4";
       const ext = fmt === "mp3" ? "mp3" : "mp4";
       const blob = new Blob(chunks, { type: mimeType });
-      const safeName = title.replace(/[^\w\s\-]/g, "").trim().replace(/\s+/g, "_").slice(0, 100);
+      const safeName = title
+        .replace(/[^\w\s\-]/g, "")
+        .trim()
+        .replace(/\s+/g, "_")
+        .slice(0, 100);
 
-      const result = await saveBlob(blob, `${safeName}.${ext}`, dlSettings?.dirHandle, dlSettings?.conflictMode);
+      const result = await saveBlob(
+        blob,
+        `${safeName}.${ext}`,
+        dlSettings?.dirHandle,
+        dlSettings?.conflictMode,
+      );
 
       updateDl({
         status: "done",
@@ -1248,7 +1536,12 @@ export default function Home() {
       });
     } catch (err) {
       clearInterval(fakeInterval);
-      updateDl({ status: "error", phase: "error", progress: 0, error: err.message });
+      updateDl({
+        status: "error",
+        phase: "error",
+        progress: 0,
+        error: err.message,
+      });
     }
   };
 
@@ -1278,7 +1571,13 @@ export default function Home() {
   };
 
   // ── Single video download entry point (with settings modal) ───────────────
-  const handleSingleDownload = async (videoId, title, fmt, qual, durationSeconds) => {
+  const handleSingleDownload = async (
+    videoId,
+    title,
+    fmt,
+    qual,
+    durationSeconds,
+  ) => {
     let settings;
     try {
       settings = await requestSettings(1);
@@ -1307,14 +1606,27 @@ export default function Home() {
     for (const id of selected)
       initialMap.set(id, { status: "idle", phase: "idle", progress: 0 });
     setDownloads(initialMap);
-    for (const video of playlist.videos.filter((v) => selected.has(v.videoId))) {
-      await downloadVideo(video.videoId, video.title, format, quality, video.durationSeconds, true, settings);
+    for (const video of playlist.videos.filter((v) =>
+      selected.has(v.videoId),
+    )) {
+      await downloadVideo(
+        video.videoId,
+        video.title,
+        format,
+        quality,
+        video.durationSeconds,
+        true,
+        settings,
+      );
       await new Promise((r) => setTimeout(r, 600));
     }
     setDownloads((prev) => {
       const allVals = [...prev.values()];
       const videos = new Map(
-        [...prev.entries()].map(([id, d]) => [id, { status: d.status, error: d.error, skipped: d.skipped }])
+        [...prev.entries()].map(([id, d]) => [
+          id,
+          { status: d.status, error: d.error, skipped: d.skipped },
+        ]),
       );
       setCompletedSummary({
         done: allVals.filter((d) => d.status === "done" && !d.skipped).length,
@@ -1342,7 +1654,9 @@ export default function Home() {
     setBulkThumbDownloading(true);
     const prevSortBy = sortBy;
     setSortBy("selected");
-    for (const video of playlist.videos.filter((v) => selected.has(v.videoId))) {
+    for (const video of playlist.videos.filter((v) =>
+      selected.has(v.videoId),
+    )) {
       setThumbDownloads((prev) => {
         const n = new Map(prev);
         n.set(video.videoId, "downloading");
@@ -1370,8 +1684,12 @@ export default function Home() {
   };
 
   const allDl = [...downloads.values()];
-  const doneCount = allDl.filter((d) => d.status === "done" && !d.skipped).length;
-  const skippedCount = allDl.filter((d) => d.status === "done" && d.skipped).length;
+  const doneCount = allDl.filter(
+    (d) => d.status === "done" && !d.skipped,
+  ).length;
+  const skippedCount = allDl.filter(
+    (d) => d.status === "done" && d.skipped,
+  ).length;
   const errorCount = allDl.filter((d) => d.status === "error").length;
   const activeCount = allDl.filter((d) => d.status === "downloading").length;
   const allSelected = playlist && selected.size === playlist.videos.length;
@@ -1389,7 +1707,8 @@ export default function Home() {
     if (!filter) return sorted;
     const q = filter.toLowerCase();
     return sorted.filter(
-      (v) => v.title.toLowerCase().includes(q) || v.author.toLowerCase().includes(q),
+      (v) =>
+        v.title.toLowerCase().includes(q) || v.author.toLowerCase().includes(q),
     );
   }, [playlist, sortBy, filter, selected]);
 
@@ -1426,7 +1745,11 @@ export default function Home() {
                 onClick={() => setDark(!dark)}
                 disabled={isBusy}
               >
-                {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                {dark ? (
+                  <Sun className="w-4 h-4" />
+                ) : (
+                  <Moon className="w-4 h-4" />
+                )}
               </Button>
             </TooltipTrigger>
             <TooltipContent>{dark ? "Light mode" : "Dark mode"}</TooltipContent>
@@ -1439,7 +1762,9 @@ export default function Home() {
         <DeviceModeBanner
           deviceMode={downloadMode === "device"}
           disabled={isBusy}
-          onToggle={() => setDownloadMode((m) => (m === "server" ? "device" : "server"))}
+          onToggle={() =>
+            setDownloadMode((m) => (m === "server" ? "device" : "server"))
+          }
         />
 
         {/* ── URL Input ── */}
@@ -1459,17 +1784,14 @@ export default function Home() {
           </div>
 
           <div className="flex rounded-md border border-input ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 overflow-hidden">
-            <div className="flex items-center px-3 bg-muted border-r border-input shrink-0">
-              <Search className="w-4 h-4 text-muted-foreground" />
-            </div>
             <input
               id="yt-url"
-              placeholder="https://youtube.com/watch?v=... or playlist?list=..."
+              placeholder="https://youtube.com/..."
               value={url}
               onChange={(e) => !isBusy && handleUrlChange(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !isBusy && fetchData()}
               disabled={isBusy}
-              className={`flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground focus:outline-none${isBusy ? " opacity-50 cursor-not-allowed" : ""}`}
+              className={`flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-background text-foreground placeholder:text-muted-foreground ${isBusy ? " opacity-50 cursor-not-allowed" : ""}`}
             />
             {url && (
               <button
@@ -1486,8 +1808,14 @@ export default function Home() {
               disabled={isBusy || loading || !url.trim() || !urlType}
               className="rounded-none rounded-r-md border-l border-input shrink-0"
             >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              <span className="hidden sm:inline ml-1">{loading ? "Loading..." : "Fetch"}</span>
+              {loading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4" />
+              )}
+              <span className="hidden sm:inline ml-1">
+                {loading ? "Loading..." : "Fetch"}
+              </span>
             </Button>
           </div>
 
@@ -1515,7 +1843,9 @@ export default function Home() {
 
             <div className="flex flex-col gap-0.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg sm:text-xl font-semibold leading-tight">{playlist.title}</h2>
+                <h2 className="text-lg sm:text-xl font-semibold leading-tight">
+                  {playlist.title}
+                </h2>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <a
@@ -1536,20 +1866,44 @@ export default function Home() {
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
               {[
                 {
-                  icon: List, label: "Videos", value: String(playlist.videoCount),
-                  sub: playlist.unavailableCount > 0 ? `${playlist.unavailableCount} unavailable` : null,
+                  icon: List,
+                  label: "Videos",
+                  value: String(playlist.videoCount),
+                  sub:
+                    playlist.unavailableCount > 0
+                      ? `${playlist.unavailableCount} unavailable`
+                      : null,
                 },
-                { icon: Clock, label: "Total", value: playlist.totalDuration, sub: null },
-                { icon: BarChart2, label: "Avg", value: playlist.averageDuration, sub: null },
+                {
+                  icon: Clock,
+                  label: "Total",
+                  value: playlist.totalDuration,
+                  sub: null,
+                },
+                {
+                  icon: BarChart2,
+                  label: "Avg",
+                  value: playlist.averageDuration,
+                  sub: null,
+                },
               ].map(({ icon: Icon, label, value, sub }) => (
-                <div key={label} className="rounded-lg border bg-card p-3 sm:p-4 flex flex-col gap-1">
+                <div
+                  key={label}
+                  className="rounded-lg border bg-card p-3 sm:p-4 flex flex-col gap-1"
+                >
                   <div className="flex items-center gap-1 text-muted-foreground text-xs">
                     <Icon className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                     <span className="hidden sm:inline">{label}</span>
                   </div>
-                  <p className="text-lg sm:text-2xl font-mono font-medium leading-tight">{value}</p>
-                  <p className="text-xs text-muted-foreground sm:hidden">{label}</p>
-                  {sub && <p className="text-xs text-destructive font-mono">{sub}</p>}
+                  <p className="text-lg sm:text-2xl font-mono font-medium leading-tight">
+                    {value}
+                  </p>
+                  <p className="text-xs text-muted-foreground sm:hidden">
+                    {label}
+                  </p>
+                  {sub && (
+                    <p className="text-xs text-destructive font-mono">{sub}</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -1562,18 +1916,39 @@ export default function Home() {
                 <Tabs
                   value={format}
                   onValueChange={(v) => {
-                    if (!isBusy) { setFormat(v); setQuality("highest"); setCompletedSummary(null); }
+                    if (!isBusy) {
+                      setFormat(v);
+                      setQuality("highest");
+                      setCompletedSummary(null);
+                    }
                   }}
                 >
-                  <TabsList className={isBusy ? "opacity-50 pointer-events-none" : ""}>
-                    <TabsTrigger value="mp4" disabled={isBusy} className="flex items-center gap-1.5">
-                      <Video className="w-3.5 h-3.5" /><span>MP4</span>
+                  <TabsList
+                    className={isBusy ? "opacity-50 pointer-events-none" : ""}
+                  >
+                    <TabsTrigger
+                      value="mp4"
+                      disabled={isBusy}
+                      className="flex items-center gap-1.5"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>MP4</span>
                     </TabsTrigger>
-                    <TabsTrigger value="mp3" disabled={isBusy} className="flex items-center gap-1.5">
-                      <Music className="w-3.5 h-3.5" /><span>MP3</span>
+                    <TabsTrigger
+                      value="mp3"
+                      disabled={isBusy}
+                      className="flex items-center gap-1.5"
+                    >
+                      <Music className="w-3.5 h-3.5" />
+                      <span>MP3</span>
                     </TabsTrigger>
-                    <TabsTrigger value="thumbnail" disabled={isBusy} className="flex items-center gap-1.5">
-                      <ImageIcon className="w-3.5 h-3.5" /><span>JPG</span>
+                    <TabsTrigger
+                      value="thumbnail"
+                      disabled={isBusy}
+                      className="flex items-center gap-1.5"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>JPG</span>
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -1584,15 +1959,24 @@ export default function Home() {
                   <Label>Quality</Label>
                   <Select
                     value={quality}
-                    onValueChange={(v) => { setQuality(v); setCompletedSummary(null); }}
+                    onValueChange={(v) => {
+                      setQuality(v);
+                      setCompletedSummary(null);
+                    }}
                     disabled={isBusy}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        {(format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES).map((q) => (
-                          <SelectItem key={q.value} value={q.value}>{q.label}</SelectItem>
-                        ))}
+                        {(format === "mp4" ? MP4_QUALITIES : MP3_QUALITIES).map(
+                          (q) => (
+                            <SelectItem key={q.value} value={q.value}>
+                              {q.label}
+                            </SelectItem>
+                          ),
+                        )}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -1601,47 +1985,82 @@ export default function Home() {
 
               <div className="ml-auto flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
                 {/* Progress summary */}
-                {((doneCount > 0 || skippedCount > 0 || errorCount > 0) || completedSummary) &&
+                {(doneCount > 0 ||
+                  skippedCount > 0 ||
+                  errorCount > 0 ||
+                  completedSummary) &&
                   format !== "thumbnail" && (
                     <div className="flex items-center gap-2 text-xs font-mono">
-                      {(completedSummary ? completedSummary.done : doneCount) > 0 && (
+                      {(completedSummary ? completedSummary.done : doneCount) >
+                        0 && (
                         <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">
-                            {completedSummary ? completedSummary.done : doneCount} done
+                            {completedSummary
+                              ? completedSummary.done
+                              : doneCount}{" "}
+                            done
                           </span>
-                          <span className="sm:hidden">{completedSummary ? completedSummary.done : doneCount}</span>
+                          <span className="sm:hidden">
+                            {completedSummary
+                              ? completedSummary.done
+                              : doneCount}
+                          </span>
                         </span>
                       )}
-                      {(completedSummary ? completedSummary.skipped : skippedCount) > 0 && (
+                      {(completedSummary
+                        ? completedSummary.skipped
+                        : skippedCount) > 0 && (
                         <span className="flex items-center gap-1 text-muted-foreground">
                           <SkipForward className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">
-                            {completedSummary ? completedSummary.skipped : skippedCount} skipped
+                            {completedSummary
+                              ? completedSummary.skipped
+                              : skippedCount}{" "}
+                            skipped
                           </span>
-                          <span className="sm:hidden">{completedSummary ? completedSummary.skipped : skippedCount}</span>
+                          <span className="sm:hidden">
+                            {completedSummary
+                              ? completedSummary.skipped
+                              : skippedCount}
+                          </span>
                         </span>
                       )}
-                      {(completedSummary ? completedSummary.error : errorCount) > 0 && (
+                      {(completedSummary
+                        ? completedSummary.error
+                        : errorCount) > 0 && (
                         <span className="flex items-center gap-1 text-destructive">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">
-                            {completedSummary ? completedSummary.error : errorCount} failed
+                            {completedSummary
+                              ? completedSummary.error
+                              : errorCount}{" "}
+                            failed
                           </span>
-                          <span className="sm:hidden">{completedSummary ? completedSummary.error : errorCount}</span>
+                          <span className="sm:hidden">
+                            {completedSummary
+                              ? completedSummary.error
+                              : errorCount}
+                          </span>
                         </span>
                       )}
                     </div>
                   )}
                 <Button
-                  onClick={format === "thumbnail" ? downloadSelectedThumbnails : downloadSelected}
+                  onClick={
+                    format === "thumbnail"
+                      ? downloadSelectedThumbnails
+                      : downloadSelected
+                  }
                   disabled={selected.size === 0 || isBusy}
                   size="sm"
                   className="sm:h-10 sm:px-4"
                 >
                   {bulkDownloading || bulkThumbDownloading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : doneCount > 0 && doneCount === selected.size && format !== "thumbnail" ? (
+                  ) : doneCount > 0 &&
+                    doneCount === selected.size &&
+                    format !== "thumbnail" ? (
                     <RefreshCw className="w-4 h-4" />
                   ) : (
                     <Download className="w-4 h-4" />
@@ -1682,7 +2101,10 @@ export default function Home() {
                 <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <Select
                   value={sortBy}
-                  onValueChange={(v) => { setSortBy(v); setCompletedSummary(null); }}
+                  onValueChange={(v) => {
+                    setSortBy(v);
+                    setCompletedSummary(null);
+                  }}
                   disabled={isBusy}
                 >
                   <SelectTrigger className="h-8 w-32.5 sm:w-38.75 text-xs">
@@ -1691,7 +2113,11 @@ export default function Home() {
                   <SelectContent>
                     <SelectGroup>
                       {SORT_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value} className="text-xs">
+                        <SelectItem
+                          key={o.value}
+                          value={o.value}
+                          className="text-xs"
+                        >
                           {o.label}
                         </SelectItem>
                       ))}
@@ -1704,7 +2130,10 @@ export default function Home() {
                 <Input
                   placeholder="Filter..."
                   value={filter}
-                  onChange={(e) => { setFilter(e.target.value); setCompletedSummary(null); }}
+                  onChange={(e) => {
+                    setFilter(e.target.value);
+                    setCompletedSummary(null);
+                  }}
                   disabled={isBusy}
                   className="pl-8 h-8 w-full sm:w-40 text-sm"
                 />
@@ -1718,10 +2147,16 @@ export default function Home() {
                 </p>
               ) : (
                 displayedVideos.map((video) => {
-                  const dl = downloads.get(video.videoId)
-                    ?? (completedSummary?.videos?.get(video.videoId)
-                        ? { ...completedSummary.videos.get(video.videoId), progress: 0, phase: "idle", log: "" }
-                        : undefined);
+                  const dl =
+                    downloads.get(video.videoId) ??
+                    (completedSummary?.videos?.get(video.videoId)
+                      ? {
+                          ...completedSummary.videos.get(video.videoId),
+                          progress: 0,
+                          phase: "idle",
+                          log: "",
+                        }
+                      : undefined);
                   const status = dl?.status || "idle";
                   const phase = dl?.phase || "idle";
                   const isSelected = selected.has(video.videoId);
@@ -1746,13 +2181,19 @@ export default function Home() {
                           src={video.thumbnail}
                           alt=""
                           className="w-full h-full object-cover"
-                          onError={(e) => { e.target.style.display = "none"; }}
+                          onError={(e) => {
+                            e.target.style.display = "none";
+                          }}
                         />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate leading-snug">{video.title}</p>
+                        <p className="text-sm font-medium truncate leading-snug">
+                          {video.title}
+                        </p>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="text-xs text-muted-foreground truncate">{video.author}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {video.author}
+                          </p>
                           {video.viewCount > 0 && (
                             <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
                               · {formatViews(video.viewCount)}
@@ -1765,16 +2206,25 @@ export default function Home() {
                           )}
                         </div>
                         {status === "downloading" && (
-                          <Progress value={dl.progress} className="h-1 mt-1.5" />
+                          <Progress
+                            value={dl.progress}
+                            className="h-1 mt-1.5"
+                          />
                         )}
                         {status === "downloading" && dl?.log && (
-                          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{dl.log}</p>
+                          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">
+                            {dl.log}
+                          </p>
                         )}
                         {status === "done" && dl?.skipped && (
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate font-mono">Skipped</p>
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate font-mono">
+                            Skipped
+                          </p>
                         )}
                         {status === "error" && (
-                          <p className="text-xs text-destructive mt-0.5 truncate font-mono">{dl.error}</p>
+                          <p className="text-xs text-destructive mt-0.5 truncate font-mono">
+                            {dl.error}
+                          </p>
                         )}
                       </div>
                       <span className="shrink-0 text-xs text-muted-foreground font-mono hidden sm:block">
@@ -1817,7 +2267,9 @@ export default function Home() {
                                 <SkipForward className="w-3.5 h-3.5 text-muted-foreground" />
                               </span>
                             </TooltipTrigger>
-                            <TooltipContent>Skipped — file already exists</TooltipContent>
+                            <TooltipContent>
+                              Skipped — file already exists
+                            </TooltipContent>
                           </Tooltip>
                         )}
                         {status === "error" && (
@@ -1827,7 +2279,9 @@ export default function Home() {
                                 <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
                               </span>
                             </TooltipTrigger>
-                            <TooltipContent>{dl.error || "Error"}</TooltipContent>
+                            <TooltipContent>
+                              {dl.error || "Error"}
+                            </TooltipContent>
                           </Tooltip>
                         )}
                       </div>
@@ -1847,7 +2301,9 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <p className="font-semibold text-lg">Download YouTube videos &amp; playlists</p>
+              <p className="font-semibold text-lg">
+                Download YouTube videos &amp; playlists
+              </p>
               <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
                 Paste a video or playlist URL above. No API key, no sign-up.
               </p>
@@ -1859,7 +2315,10 @@ export default function Home() {
                 { icon: Music, label: "MP3", sub: "Up to 320kbps" },
                 { icon: ImageIcon, label: "Thumbnail", sub: "Max resolution" },
               ].map(({ icon: Icon, label, sub }) => (
-                <div key={label} className="rounded-xl border bg-card p-3 flex flex-col items-center gap-1.5">
+                <div
+                  key={label}
+                  className="rounded-xl border bg-card p-3 flex flex-col items-center gap-1.5"
+                >
                   <Icon className="w-4 h-4 text-muted-foreground" />
                   <p className="text-xs font-medium">{label}</p>
                   <p className="text-xs text-muted-foreground">{sub}</p>
