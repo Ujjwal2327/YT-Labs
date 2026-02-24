@@ -17,6 +17,7 @@
 
 ALL_FILES
 commands.txt
+tasks.txt
 
 # testing
 /coverage
