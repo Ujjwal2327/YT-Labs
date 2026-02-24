@@ -154,7 +154,14 @@ function formatViews(n) {
 
 // ── File System Access API helpers ────────────────────────────────────────────
 function isFSASupported() {
-  return typeof window !== "undefined" && "showDirectoryPicker" in window;
+  // showDirectoryPicker exists on Android Chrome but createWritable() does NOT —
+  // it is desktop-only. We must check both or mobile users get a broken folder picker.
+  return (
+    typeof window !== "undefined" &&
+    "showDirectoryPicker" in window &&
+    typeof FileSystemFileHandle !== "undefined" &&
+    "createWritable" in FileSystemFileHandle.prototype
+  );
 }
 
 /** Detects Brave by checking the brave object injected into navigator */
@@ -172,6 +179,11 @@ function isBrave() {
  * Returns true if FSA writes are functional.
  */
 async function testFSAWritable(dirHandle) {
+  // createWritable is not available on Android Chrome — skip the test entirely
+  // to avoid creating a 0-byte ghost file.
+  if (typeof FileSystemFileHandle === "undefined" || !("createWritable" in FileSystemFileHandle.prototype)) {
+    return false;
+  }
   try {
     const testFile = await dirHandle.getFileHandle("__ytlabs_test__", {
       create: true,
@@ -185,6 +197,9 @@ async function testFSAWritable(dirHandle) {
     } catch (_) {}
     return true;
   } catch {
+    // If getFileHandle succeeded but createWritable failed, the test file
+    // may exist as 0 bytes — clean it up.
+    try { await dirHandle.removeEntry("__ytlabs_test__"); } catch (_) {}
     return false;
   }
 }
@@ -244,14 +259,43 @@ async function saveBlob(blob, filename, dirHandle, conflictMode) {
   if (finalName === null)
     return { saved: false, skipped: true, fsaFailed: false };
 
+  // Extra safety: if createWritable isn't supported (e.g. Android Chrome slipped through),
+  // don't even attempt FSA — just trigger a normal browser download.
+  if (
+    typeof FileSystemFileHandle === "undefined" ||
+    !("createWritable" in FileSystemFileHandle.prototype)
+  ) {
+    triggerBlobDownload(blob, filename);
+    return { saved: true, skipped: false, fsaFailed: true };
+  }
+
+  let fh;
   try {
-    const fh = await dirHandle.getFileHandle(finalName, { create: true });
-    const writable = await fh.createWritable();
+    fh = await dirHandle.getFileHandle(finalName, { create: true });
+  } catch {
+    // getFileHandle itself failed — fall back without creating anything
+    triggerBlobDownload(blob, filename);
+    return { saved: true, skipped: false, fsaFailed: true };
+  }
+
+  let writable;
+  try {
+    writable = await fh.createWritable();
+  } catch {
+    // createWritable blocked — the file handle was created as 0 bytes, remove it
+    try { await dirHandle.removeEntry(finalName); } catch (_) {}
+    triggerBlobDownload(blob, filename);
+    return { saved: true, skipped: false, fsaFailed: true };
+  }
+
+  try {
     await writable.write(blob);
     await writable.close();
     return { saved: true, skipped: false, fsaFailed: false };
   } catch {
-    // createWritable() blocked (Brave shields, permissions, etc.) — fall back
+    // Write or close failed mid-stream — abort, delete partial file, fall back
+    try { await writable.abort(); } catch (_) {}
+    try { await dirHandle.removeEntry(finalName); } catch (_) {}
     triggerBlobDownload(blob, filename);
     return { saved: true, skipped: false, fsaFailed: true };
   }
@@ -617,11 +661,29 @@ function DownloadSettingsModal({
 
   useEffect(() => {
     if (open) {
-      setDirHandle(initialSettings?.dirHandle || null);
+      const existingHandle = initialSettings?.dirHandle || null;
+      setDirHandle(existingHandle);
       setConflictMode(initialSettings?.conflictMode || "skip");
       setPickError(null);
-      setFsaWritable(null);
       setPicking(false);
+
+      if (existingHandle) {
+        // Re-test the previously selected folder — permissions can change between sessions
+        setFsaWritable(null); // null = "testing" state, shows spinner
+        testFSAWritable(existingHandle).then((writable) => {
+          setFsaWritable(writable);
+          if (!writable) {
+            setPickError(
+              "Your browser blocked file writes to this folder. Files will download to your Downloads folder instead."
+            );
+          }
+        }).catch(() => {
+          setFsaWritable(false);
+          setPickError("Could not access the previously selected folder. Please choose a new one.");
+        });
+      } else {
+        setFsaWritable(null);
+      }
     }
   }, [open]);
 
@@ -725,9 +787,9 @@ function DownloadSettingsModal({
               <div className="flex flex-col gap-2">
                 <button
                   onClick={pickDir}
-                  disabled={picking}
+                  disabled={picking || (dirHandle && fsaWritable === null)}
                   className={`flex items-center gap-3 w-full rounded-xl border-2 px-4 py-3 text-left transition-all ${
-                    picking
+                    picking || (dirHandle && fsaWritable === null)
                       ? "border-border opacity-60 cursor-not-allowed"
                       : dirHandle && fsaWritable
                         ? "border-primary/40 bg-primary/5 hover:bg-primary/10"
@@ -763,6 +825,15 @@ function DownloadSettingsModal({
                           Choose a folder in the dialog
                         </p>
                       </>
+                    ) : dirHandle && fsaWritable === null ? (
+                      <>
+                        <p className="text-sm font-medium truncate">
+                          {dirHandle.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Testing write access…
+                        </p>
+                      </>
                     ) : dirHandle ? (
                       <>
                         <p className="text-sm font-medium truncate">
@@ -783,7 +854,7 @@ function DownloadSettingsModal({
                       </>
                     )}
                   </div>
-                  {picking ? (
+                  {picking || (dirHandle && fsaWritable === null) ? (
                     <Loader2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 animate-spin" />
                   ) : (
                     <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -817,8 +888,7 @@ function DownloadSettingsModal({
               <div className="rounded-xl border bg-muted/50 px-4 py-3 flex items-start gap-2.5">
                 <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Folder selection requires Chrome or Edge. Files will download
-                  to your browser's default Downloads folder.
+                  Custom save folders require desktop Chrome or Edge — Android Chrome does not support writing files to chosen folders. Files will download to your browser's default Downloads folder.
                 </p>
               </div>
             )}
@@ -881,8 +951,8 @@ function DownloadSettingsModal({
           </Button>
           <Button
             size="sm"
-            onClick={() => onConfirm({ dirHandle, conflictMode })}
-            disabled={picking}
+            onClick={() => onConfirm({ dirHandle: fsaWritable === true ? dirHandle : null, conflictMode })}
+            disabled={picking || fsaWritable === null && dirHandle !== null}
             className="gap-1.5"
           >
             <Download className="w-3.5 h-3.5" />
