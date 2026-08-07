@@ -1,5 +1,13 @@
 // 📁 app/api/playlist/route.js
 import { NextResponse } from "next/server";
+import {
+  getYtDlp,
+  withRetry,
+  baseOpts,
+  friendlyError,
+  resolveCookies,
+  cleanupCookies,
+} from "@/lib/ytdlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -32,11 +40,12 @@ function isAvailable(entry) {
   if (!entry || !entry.id) return false;
   const title = (entry.title || "").toLowerCase().trim();
   if (UNAVAILABLE_TITLES.has(title)) return false;
-  if (entry.availability === "private" || entry.availability === "needs_auth") return false;
+  if (entry.availability === "private" || entry.availability === "needs_auth")
+    return false;
   return true;
 }
 
-function buildResponseFromYtDlp(data, playlistId) {
+function buildResponse(data, playlistId) {
   const allEntries = data.entries || [];
   const entries = allEntries.filter(isAvailable);
   const unavailableCount = allEntries.length - entries.length;
@@ -45,16 +54,22 @@ function buildResponseFromYtDlp(data, playlistId) {
   const videos = entries.map((entry) => {
     const secs = entry.duration || 0;
     const raw = entry.upload_date || "";
-    const uploadDateDisplay = raw.length === 8
-      ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
-      : "";
+    const uploadDateDisplay =
+      raw.length === 8
+        ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+        : "";
     return {
       videoId: entry.id,
       title: entry.title || "Unknown",
       duration: formatDuration(secs),
       durationSeconds: secs,
       thumbnail: `https://i.ytimg.com/vi/${entry.id}/mqdefault.jpg`,
-      author: entry.uploader || entry.channel || entry.uploader_id || data.uploader || "Unknown",
+      author:
+        entry.uploader ||
+        entry.channel ||
+        entry.uploader_id ||
+        data.uploader ||
+        "Unknown",
       index: idx++,
       viewCount: entry.view_count || 0,
       uploadDate: raw,
@@ -63,7 +78,8 @@ function buildResponseFromYtDlp(data, playlistId) {
   });
 
   const totalSeconds = videos.reduce((sum, v) => sum + v.durationSeconds, 0);
-  const avgSeconds = videos.length > 0 ? Math.round(totalSeconds / videos.length) : 0;
+  const avgSeconds =
+    videos.length > 0 ? Math.round(totalSeconds / videos.length) : 0;
 
   return {
     playlistId,
@@ -82,62 +98,47 @@ function buildResponseFromYtDlp(data, playlistId) {
 export async function GET(req) {
   const url = req.nextUrl.searchParams.get("url");
   if (!url) {
-    return NextResponse.json({ error: "Missing url parameter" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Missing url parameter" },
+      { status: 400 },
+    );
   }
 
   const playlistId = extractPlaylistId(url);
   if (!playlistId) {
     return NextResponse.json(
       { error: "Invalid playlist URL — must contain ?list=..." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  // ── Vercel: use pure-JS innertube API (no binary needed) ──────────────────
-  if (process.env.VERCEL) {
-    try {
-      const { getPlaylistInfo } = await import("@/lib/ytdlp-vercel");
-      const data = await getPlaylistInfo(playlistId);
-      return NextResponse.json(data);
-    } catch (err) {
-      console.error("Playlist fetch error (innertube):", err);
-      return NextResponse.json(
-        { error: err?.message || "Failed to fetch playlist" },
-        { status: 500 }
-      );
-    }
-  }
-
-  // ── Railway / local: use yt-dlp binary ────────────────────────────────────
+  const cookies = await resolveCookies(req);
   try {
-    const { getYtDlp, withRetry } = await import("@/lib/ytdlp");
     const youtubeDl = await getYtDlp();
 
     const data = await withRetry(() =>
-      youtubeDl(`https://www.youtube.com/playlist?list=${playlistId}`, {
-        dumpSingleJson: true,
-        flatPlaylist: true,
-        ignoreErrors: true,
-        quiet: true,
-        noWarnings: true,
-        extractorArgs: "youtube:player_client=ios,android",
-      })
+      youtubeDl(
+        `https://www.youtube.com/playlist?list=${playlistId}`,
+        baseOpts(
+          { dumpSingleJson: true, flatPlaylist: true, ignoreErrors: true },
+          cookies.filePath,
+        ),
+      ),
     );
 
-    return NextResponse.json(buildResponseFromYtDlp(data, playlistId));
+    return NextResponse.json(buildResponse(data, playlistId));
   } catch (err) {
-    console.error("Playlist fetch error:", err);
+    console.error("Playlist fetch error:", err?.stderr || err);
 
     if (err.stdout) {
       try {
         const data = JSON.parse(err.stdout);
-        return NextResponse.json(buildResponseFromYtDlp(data, playlistId));
+        return NextResponse.json(buildResponse(data, playlistId));
       } catch (_) {}
     }
 
-    return NextResponse.json(
-      { error: err?.message || "Failed to fetch playlist" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: friendlyError(err) }, { status: 500 });
+  } finally {
+    await cleanupCookies(cookies);
   }
 }

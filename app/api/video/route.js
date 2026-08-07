@@ -1,5 +1,13 @@
 // 📁 app/api/video/route.js
 import { NextResponse } from "next/server";
+import {
+  getYtDlp,
+  withRetry,
+  baseOpts,
+  friendlyError,
+  resolveCookies,
+  cleanupCookies,
+} from "@/lib/ytdlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -7,8 +15,10 @@ export const maxDuration = 60;
 function extractVideoId(url) {
   try {
     const parsed = new URL(url);
-    if (parsed.hostname === "youtu.be") return parsed.pathname.slice(1).split("?")[0];
-    if (parsed.pathname.startsWith("/shorts/")) return parsed.pathname.split("/")[2] || null;
+    if (parsed.hostname === "youtu.be")
+      return parsed.pathname.slice(1).split("?")[0];
+    if (parsed.pathname.startsWith("/shorts/"))
+      return parsed.pathname.split("/")[2] || null;
     return parsed.searchParams.get("v") || null;
   } catch {
     return null;
@@ -38,35 +48,20 @@ export async function GET(req) {
 
   const videoId = extractVideoId(url);
   if (!videoId)
-    return NextResponse.json({ error: "Invalid video URL — must contain a video ID" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid video URL — must contain a video ID" },
+      { status: 400 },
+    );
 
-  // ── Vercel: use pure-JS ytdl-core (no binary needed) ──────────────────────
-  if (process.env.VERCEL) {
-    try {
-      const { getVideoInfo } = await import("@/lib/ytdlp-vercel");
-      const info = await getVideoInfo(videoId);
-      return NextResponse.json(info);
-    } catch (err) {
-      console.error("Video fetch error (ytdl-core):", err);
-      return NextResponse.json(
-        { error: err?.message || "Failed to fetch video info" },
-        { status: 500 }
-      );
-    }
-  }
-
-  // ── Railway / local: use yt-dlp binary ────────────────────────────────────
+  const cookies = await resolveCookies(req);
   try {
-    const { getYtDlp, withRetry } = await import("@/lib/ytdlp");
     const youtubeDl = await getYtDlp();
 
     const info = await withRetry(() =>
-      youtubeDl(`https://www.youtube.com/watch?v=${videoId}`, {
-        dumpSingleJson: true,
-        quiet: true,
-        noWarnings: true,
-        extractorArgs: "youtube:player_client=ios,android",
-      })
+      youtubeDl(
+        `https://www.youtube.com/watch?v=${videoId}`,
+        baseOpts({ dumpSingleJson: true }, cookies.filePath),
+      ),
     );
 
     const raw = info.upload_date || "";
@@ -100,10 +95,9 @@ export async function GET(req) {
       tags: (info.tags || []).slice(0, 8),
     });
   } catch (err) {
-    console.error("Video fetch error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Failed to fetch video info" },
-      { status: 500 }
-    );
+    console.error("Video fetch error:", err?.stderr || err);
+    return NextResponse.json({ error: friendlyError(err) }, { status: 500 });
+  } finally {
+    await cleanupCookies(cookies);
   }
 }

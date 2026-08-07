@@ -84,7 +84,8 @@ async function probeStream(targetUrl) {
       },
     });
 
-    const contentType = res.headers.get("content-type") || "application/octet-stream";
+    const contentType =
+      res.headers.get("content-type") || "application/octet-stream";
 
     // content-range: bytes 0-0/TOTAL
     const cr = res.headers.get("content-range");
@@ -114,7 +115,7 @@ export async function GET(req) {
   if (!isAllowedUrl(targetUrl)) {
     return NextResponse.json(
       { error: "URL not allowed — only YouTube CDN URLs are proxied" },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
@@ -133,7 +134,7 @@ export async function GET(req) {
       if (!upstream.ok) {
         return NextResponse.json(
           { error: `Upstream error ${upstream.status}` },
-          { status: upstream.status }
+          { status: upstream.status },
         );
       }
       const headers = new Headers();
@@ -144,7 +145,10 @@ export async function GET(req) {
       return new Response(upstream.body, { status: upstream.status, headers });
     } catch (err) {
       console.error("Thumbnail proxy error:", err);
-      return NextResponse.json({ error: err?.message || "Proxy failed" }, { status: 500 });
+      return NextResponse.json(
+        { error: err?.message || "Proxy failed" },
+        { status: 500 },
+      );
     }
   }
 
@@ -174,9 +178,12 @@ export async function GET(req) {
         isRangeRequest = true;
         responseHeaders.set(
           "Content-Range",
-          `bytes ${rangeStart}-${rangeEnd}/${totalSize}`
+          `bytes ${rangeStart}-${rangeEnd}/${totalSize}`,
         );
-        responseHeaders.set("Content-Length", String(rangeEnd - rangeStart + 1));
+        responseHeaders.set(
+          "Content-Length",
+          String(rangeEnd - rangeStart + 1),
+        );
       }
     }
 
@@ -192,15 +199,19 @@ export async function GET(req) {
 
         while (true) {
           // Determine chunk end byte
-          const chunkEnd = end !== null
-            ? Math.min(pos + CHUNK_SIZE - 1, end)
-            : pos + CHUNK_SIZE - 1;
+          const chunkEnd =
+            end !== null
+              ? Math.min(pos + CHUNK_SIZE - 1, end)
+              : pos + CHUNK_SIZE - 1;
 
           let chunk;
           try {
             chunk = await fetchChunk(targetUrl, pos, chunkEnd);
           } catch (err) {
-            console.error(`[proxy] chunk fetch failed at ${pos}-${chunkEnd}:`, err.message);
+            console.error(
+              `[proxy] chunk fetch failed at ${pos}-${chunkEnd}:`,
+              err.message,
+            );
             controller.error(err);
             return;
           }
@@ -227,7 +238,7 @@ export async function GET(req) {
     console.error("Proxy error:", err);
     return NextResponse.json(
       { error: err?.message || "Proxy failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

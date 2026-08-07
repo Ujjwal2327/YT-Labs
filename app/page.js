@@ -45,9 +45,6 @@ import {
   Calendar,
   User,
   Tag,
-  Cpu,
-  Server,
-  Zap,
   Info,
   ImageIcon,
   Folder,
@@ -57,6 +54,7 @@ import {
   FilePlus,
   Settings2,
   ChevronRight,
+  Cookie,
 } from "lucide-react";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -72,6 +70,29 @@ function useTheme() {
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
   return [dark, setDark];
+}
+
+// ── Cookies ───────────────────────────────────────────────────────────────────
+// Lets a visitor supply their OWN YouTube cookies from their own browser, so
+// reliable downloads don't depend on the site operator manually refreshing
+// one shared account forever. Stored only in this browser's localStorage;
+// sent only to this app's own API routes via the x-ytdlp-cookies header, and
+// never written to disk server-side beyond the single request that uses it.
+function useCookies() {
+  const [cookies, setCookiesState] = useState("");
+  useEffect(() => {
+    setCookiesState(localStorage.getItem("ytlabs_cookies") || "");
+  }, []);
+  const setCookies = (val) => {
+    setCookiesState(val);
+    if (val) localStorage.setItem("ytlabs_cookies", val);
+    else localStorage.removeItem("ytlabs_cookies");
+  };
+  return [cookies, setCookies];
+}
+
+function cookieHeaders(cookies) {
+  return cookies ? { "x-ytdlp-cookies": cookies } : {};
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -181,7 +202,10 @@ function isBrave() {
 async function testFSAWritable(dirHandle) {
   // createWritable is not available on Android Chrome — skip the test entirely
   // to avoid creating a 0-byte ghost file.
-  if (typeof FileSystemFileHandle === "undefined" || !("createWritable" in FileSystemFileHandle.prototype)) {
+  if (
+    typeof FileSystemFileHandle === "undefined" ||
+    !("createWritable" in FileSystemFileHandle.prototype)
+  ) {
     return false;
   }
   try {
@@ -199,7 +223,9 @@ async function testFSAWritable(dirHandle) {
   } catch {
     // If getFileHandle succeeded but createWritable failed, the test file
     // may exist as 0 bytes — clean it up.
-    try { await dirHandle.removeEntry("__ytlabs_test__"); } catch (_) {}
+    try {
+      await dirHandle.removeEntry("__ytlabs_test__");
+    } catch (_) {}
     return false;
   }
 }
@@ -283,7 +309,9 @@ async function saveBlob(blob, filename, dirHandle, conflictMode) {
     writable = await fh.createWritable();
   } catch {
     // createWritable blocked — the file handle was created as 0 bytes, remove it
-    try { await dirHandle.removeEntry(finalName); } catch (_) {}
+    try {
+      await dirHandle.removeEntry(finalName);
+    } catch (_) {}
     triggerBlobDownload(blob, filename);
     return { saved: true, skipped: false, fsaFailed: true };
   }
@@ -294,8 +322,12 @@ async function saveBlob(blob, filename, dirHandle, conflictMode) {
     return { saved: true, skipped: false, fsaFailed: false };
   } catch {
     // Write or close failed mid-stream — abort, delete partial file, fall back
-    try { await writable.abort(); } catch (_) {}
-    try { await dirHandle.removeEntry(finalName); } catch (_) {}
+    try {
+      await writable.abort();
+    } catch (_) {}
+    try {
+      await dirHandle.removeEntry(finalName);
+    } catch (_) {}
     triggerBlobDownload(blob, filename);
     return { saved: true, skipped: false, fsaFailed: true };
   }
@@ -670,17 +702,21 @@ function DownloadSettingsModal({
       if (existingHandle) {
         // Re-test the previously selected folder — permissions can change between sessions
         setFsaWritable(null); // null = "testing" state, shows spinner
-        testFSAWritable(existingHandle).then((writable) => {
-          setFsaWritable(writable);
-          if (!writable) {
+        testFSAWritable(existingHandle)
+          .then((writable) => {
+            setFsaWritable(writable);
+            if (!writable) {
+              setPickError(
+                "Your browser blocked file writes to this folder. Files will download to your Downloads folder instead.",
+              );
+            }
+          })
+          .catch(() => {
+            setFsaWritable(false);
             setPickError(
-              "Your browser blocked file writes to this folder. Files will download to your Downloads folder instead."
+              "Could not access the previously selected folder. Please choose a new one.",
             );
-          }
-        }).catch(() => {
-          setFsaWritable(false);
-          setPickError("Could not access the previously selected folder. Please choose a new one.");
-        });
+          });
       } else {
         setFsaWritable(null);
       }
@@ -888,7 +924,9 @@ function DownloadSettingsModal({
               <div className="rounded-xl border bg-muted/50 px-4 py-3 flex items-start gap-2.5">
                 <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Custom save folders require desktop Chrome or Edge — Android Chrome does not support writing files to chosen folders. Files will download to your browser's default Downloads folder.
+                  Custom save folders require desktop Chrome or Edge — Android
+                  Chrome does not support writing files to chosen folders. Files
+                  will download to your browser's default Downloads folder.
                 </p>
               </div>
             )}
@@ -951,8 +989,13 @@ function DownloadSettingsModal({
           </Button>
           <Button
             size="sm"
-            onClick={() => onConfirm({ dirHandle: fsaWritable === true ? dirHandle : null, conflictMode })}
-            disabled={picking || fsaWritable === null && dirHandle !== null}
+            onClick={() =>
+              onConfirm({
+                dirHandle: fsaWritable === true ? dirHandle : null,
+                conflictMode,
+              })
+            }
+            disabled={picking || (fsaWritable === null && dirHandle !== null)}
             className="gap-1.5"
           >
             <Download className="w-3.5 h-3.5" />
@@ -964,65 +1007,106 @@ function DownloadSettingsModal({
   );
 }
 
-// ── Download Mode Banner ──────────────────────────────────────────────────────
-function DeviceModeBanner({ deviceMode, onToggle, disabled = false }) {
+// ── Cookies Modal ────────────────────────────────────────────────────────────
+function CookiesModal({ open, onClose, cookies, onSave }) {
+  const [draft, setDraft] = useState(cookies);
+
+  useEffect(() => {
+    if (open) setDraft(cookies);
+  }, [open, cookies]);
+
+  if (!open) return null;
+
   return (
-    <div
-      className={`rounded-xl border p-3 sm:p-4 flex items-start gap-3 transition-colors ${
-        deviceMode
-          ? "bg-primary/5 border-primary/30"
-          : "bg-muted/30 border-border"
-      }`}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className={`mt-0.5 p-1.5 rounded-md shrink-0 ${deviceMode ? "bg-primary/10" : "bg-muted"}`}
-      >
-        {deviceMode ? (
-          <Cpu className="w-4 h-4 text-primary" />
-        ) : (
-          <Server className="w-4 h-4 text-muted-foreground" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0 self-center">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-semibold">
-            {deviceMode ? "Device Mode — ON" : "Server Mode — ON"}
-          </p>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-mono hidden sm:block${
-              deviceMode
-                ? "bg-primary/10 text-primary"
-                : "bg-muted text-muted-foreground"
-            }`}
+        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border bg-card shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded-lg bg-primary/10">
+              <Cookie className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold leading-tight">
+                Your YouTube Cookies
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Optional — makes downloads far more reliable
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
-            {deviceMode ? "your device does the work" : "server does the work"}
-          </span>
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed hidden sm:block">
-          {deviceMode
-            ? "Server fetches stream URLs only. All processing happens in your browser — zero server bandwidth."
-            : "Everything runs on the server. Simple and reliable, but uses server bandwidth and CPU."}
-        </p>
-      </div>
 
-      <Button
-        variant={deviceMode ? "outline" : "default"}
-        size="sm"
-        onClick={onToggle}
-        disabled={disabled}
-        className="shrink-0 gap-1.5 text-xs"
-      >
-        {deviceMode ? (
-          <>
-            <Server className="w-3 h-3" /> Use Server
-          </>
-        ) : (
-          <>
-            <Cpu className="w-3 h-3" /> Use My Device
-          </>
-        )}
-      </Button>
+        <div className="p-5 flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            YouTube increasingly blocks downloads from anonymous requests.
+            Pasting your own cookies here fixes that for videos you fetch.
+            They're stored only in this browser and sent only to this site's own
+            server — never anywhere else, never saved on the server past the
+            single request that uses them.
+          </p>
+          <p className="text-xs text-muted-foreground leading-relaxed flex items-start gap-1.5">
+            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+            Use a secondary/throwaway Google account signed into YouTube, not
+            your main one — then export cookies with a browser extension like
+            "Get cookies.txt LOCALLY".
+          </p>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={
+              "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...\t..."
+            }
+            rows={8}
+            className="w-full rounded-lg border bg-background px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+            spellCheck={false}
+          />
+          {cookies && (
+            <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Cookies are currently
+              configured in this browser
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-5 py-4 border-t bg-muted/20">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              onSave("");
+              setDraft("");
+            }}
+            disabled={!cookies && !draft}
+            className="text-muted-foreground"
+          >
+            Clear
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                onSave(draft.trim());
+                onClose();
+              }}
+            >
+              Save
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1255,8 +1339,8 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [dark, setDark] = useTheme();
-
-  const [downloadMode, setDownloadMode] = useState("device");
+  const [cookies, setCookies] = useCookies();
+  const [cookiesModalOpen, setCookiesModalOpen] = useState(false);
 
   const [url, setUrl] = useState("");
   const [urlType, setUrlType] = useState(null);
@@ -1357,6 +1441,7 @@ export default function Home() {
       try {
         const res = await fetch(
           `/api/playlist?url=${encodeURIComponent(url.trim())}`,
+          { headers: cookieHeaders(cookies) },
         );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to fetch playlist");
@@ -1369,6 +1454,7 @@ export default function Home() {
       try {
         const res = await fetch(
           `/api/video?url=${encodeURIComponent(url.trim())}`,
+          { headers: cookieHeaders(cookies) },
         );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to fetch video");
@@ -1378,7 +1464,7 @@ export default function Home() {
       }
     }
     setLoading(false);
-  }, [url]);
+  }, [url, cookies]);
 
   // ── Core download function ────────────────────────────────────────────────
   const downloadVideo = async (
@@ -1409,64 +1495,16 @@ export default function Home() {
       log: "",
     });
 
-    // ── Device mode ───────────────────────────────────────────────────────────
-    if (downloadMode === "device") {
-      try {
-        updateDl({ log: "Getting stream URLs from server…", progress: 3 });
-
-        if (fmt === "thumbnail") {
-          updateDl({ phase: "streaming", progress: 20 });
-          const result = await downloadThumbnail(videoId, title, dlSettings);
-          if (result?.skipped) {
-            updateDl({
-              status: "done",
-              phase: "done",
-              progress: 100,
-              log: "Skipped — file already exists.",
-            });
-          } else {
-            updateDl({ status: "done", phase: "done", progress: 100, log: "" });
-          }
-          return;
-        }
-
-        const res = await fetch(
-          `/api/stream-url?videoId=${videoId}&format=${fmt}&quality=${qual}`,
-        );
-        const streamInfo = await res.json();
-        if (!res.ok)
-          throw new Error(streamInfo.error || "Failed to get stream URL");
-
-        updateDl({
-          progress: 8,
-          log: "Stream URL obtained — your device takes over from here.",
-        });
-
-        const onProgress = (p) => updateDl({ progress: p });
-        const onLog = (msg) => updateDl({ log: msg });
-
-        let result;
-        if (fmt === "mp3") {
-          updateDl({ phase: "converting" });
-          result = await deviceModeMP3(
-            streamInfo,
-            qual,
-            title,
-            onProgress,
-            onLog,
-            dlSettings,
-          );
-        } else {
-          updateDl({ phase: "streaming" });
-          result = await deviceModeMP4(
-            streamInfo,
-            title,
-            onProgress,
-            onLog,
-            dlSettings,
-          );
-        }
-
+    // Everything below runs in the browser: the server only ever resolves a
+    // short-lived signed CDN URL (/api/stream-url), never touches the actual
+    // media bytes for this leg. The one exception is unavoidable — googlevideo
+    // URLs aren't CORS-enabled for third-party origins, so /api/proxy has to
+    // relay the bytes — but no transcoding or buffering of the full file
+    // happens server-side; ffmpeg.wasm does that here, in-browser.
+    try {
+      if (fmt === "thumbnail") {
+        updateDl({ phase: "streaming", progress: 20 });
+        const result = await downloadThumbnail(videoId, title, dlSettings);
         updateDl({
           status: "done",
           phase: "done",
@@ -1474,128 +1512,48 @@ export default function Home() {
           log: result?.skipped ? "Skipped — file already exists." : "",
           skipped: result?.skipped || false,
         });
-      } catch (err) {
-        console.error("Device mode download error:", err);
-        updateDl({
-          status: "error",
-          phase: "error",
-          progress: 0,
-          error: err.message,
-          log: "",
-        });
+        return;
       }
-      return;
-    }
 
-    // ── Server mode ───────────────────────────────────────────────────────────
-    if (fmt === "thumbnail") {
-      try {
-        updateDl({ phase: "streaming", progress: 20 });
-        const result = await downloadThumbnail(videoId, title, dlSettings);
-        if (result?.skipped) {
-          updateDl({
-            status: "done",
-            phase: "done",
-            progress: 100,
-            log: "Skipped — file already exists.",
-          });
-        } else {
-          updateDl({ status: "done", phase: "done", progress: 100, log: "" });
-        }
-      } catch (err) {
-        updateDl({
-          status: "error",
-          phase: "error",
-          progress: 0,
-          error: err.message,
-        });
-      }
-      return;
-    }
+      updateDl({ log: "Getting stream URL from server…", progress: 3 });
 
-    const formatSlowdown = fmt === "mp3" ? 2.5 : 1;
-    const k = Math.min(
-      0.07,
-      Math.max(0.0004, (0.014 * (300 / durationSeconds)) / formatSlowdown),
-    );
-    let fakeProgress = 0;
+      const res = await fetch(
+        `/api/stream-url?videoId=${videoId}&format=${fmt}&quality=${qual}`,
+        { headers: cookieHeaders(cookies) },
+      );
+      const streamInfo = await res.json();
+      if (!res.ok)
+        throw new Error(streamInfo.error || "Failed to get stream URL");
 
-    const fakeInterval = setInterval(() => {
-      const step = Math.max(0.1, (85 - fakeProgress) * k);
-      fakeProgress = Math.min(85, fakeProgress + step);
-      if (isPlaylist) {
-        setDownloads((prev) => {
-          const n = new Map(prev);
-          const cur = n.get(videoId);
-          if (cur?.phase === "processing")
-            n.set(videoId, { ...cur, progress: Math.round(fakeProgress) });
-          return n;
-        });
+      updateDl({
+        progress: 8,
+        log: "Stream URL obtained — your device takes over from here.",
+      });
+
+      const onProgress = (p) => updateDl({ progress: p });
+      const onLog = (msg) => updateDl({ log: msg });
+
+      let result;
+      if (fmt === "mp3") {
+        updateDl({ phase: "converting" });
+        result = await deviceModeMP3(
+          streamInfo,
+          qual,
+          title,
+          onProgress,
+          onLog,
+          dlSettings,
+        );
       } else {
-        setVideoDownload((prev) =>
-          prev?.phase === "processing"
-            ? { ...prev, progress: Math.round(fakeProgress) }
-            : prev,
+        updateDl({ phase: "streaming" });
+        result = await deviceModeMP4(
+          streamInfo,
+          title,
+          onProgress,
+          onLog,
+          dlSettings,
         );
       }
-    }, 800);
-
-    try {
-      const res = await fetch(
-        `/api/download?videoId=${videoId}&format=${fmt}&quality=${qual}`,
-      );
-      clearInterval(fakeInterval);
-
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({ error: "Download failed" }));
-        if (e.vercelLimitError) {
-          throw new Error(
-            "Server Mode is unavailable on Vercel — please switch to Device Mode.",
-          );
-        }
-        throw new Error(e.error || "Download failed");
-      }
-
-      const contentLength = res.headers.get("content-length");
-      const total = contentLength ? parseInt(contentLength) : 0;
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No readable stream");
-
-      const chunks = [];
-      let received = 0;
-      const startProgress = Math.round(fakeProgress);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        const sp = total
-          ? Math.min(
-              Math.round(
-                (received / total) * (99 - startProgress) + startProgress,
-              ),
-              99,
-            )
-          : Math.min(startProgress + Math.round(received / 80000), 99);
-        updateDl({ phase: "streaming", progress: sp });
-      }
-
-      const mimeType = fmt === "mp3" ? "audio/mpeg" : "video/mp4";
-      const ext = fmt === "mp3" ? "mp3" : "mp4";
-      const blob = new Blob(chunks, { type: mimeType });
-      const safeName = title
-        .replace(/[^\w\s\-]/g, "")
-        .trim()
-        .replace(/\s+/g, "_")
-        .slice(0, 100);
-
-      const result = await saveBlob(
-        blob,
-        `${safeName}.${ext}`,
-        dlSettings?.dirHandle,
-        dlSettings?.conflictMode,
-      );
 
       updateDl({
         status: "done",
@@ -1605,12 +1563,13 @@ export default function Home() {
         skipped: result?.skipped || false,
       });
     } catch (err) {
-      clearInterval(fakeInterval);
+      console.error("Download error:", err);
       updateDl({
         status: "error",
         phase: "error",
         progress: 0,
         error: err.message,
+        log: "",
       });
     }
   };
@@ -1800,6 +1759,14 @@ export default function Home() {
         onCancel={settingsModal.onCancel}
       />
 
+      {/* ── Cookies Modal ── */}
+      <CookiesModal
+        open={cookiesModalOpen}
+        onClose={() => setCookiesModalOpen(false)}
+        cookies={cookies}
+        onSave={setCookies}
+      />
+
       {/* ── Header ── */}
       <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
@@ -1807,36 +1774,52 @@ export default function Home() {
             <FlaskConical className="w-5 h-5 text-primary" />
             <span className="font-semibold text-lg">YT Labs</span>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setDark(!dark)}
-                disabled={isBusy}
-              >
-                {dark ? (
-                  <Sun className="w-4 h-4" />
-                ) : (
-                  <Moon className="w-4 h-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{dark ? "Light mode" : "Dark mode"}</TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCookiesModalOpen(true)}
+                  disabled={isBusy}
+                  className="relative"
+                >
+                  <Cookie className="w-4 h-4" />
+                  {cookies && (
+                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-green-500" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {cookies
+                  ? "Your YouTube cookies (configured)"
+                  : "Add your YouTube cookies"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setDark(!dark)}
+                  disabled={isBusy}
+                >
+                  {dark ? (
+                    <Sun className="w-4 h-4" />
+                  ) : (
+                    <Moon className="w-4 h-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {dark ? "Light mode" : "Dark mode"}
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:py-8 flex flex-col gap-5 sm:gap-6">
-        {/* ── Download Mode Banner ── */}
-        <DeviceModeBanner
-          deviceMode={downloadMode === "device"}
-          disabled={isBusy}
-          onToggle={() =>
-            setDownloadMode((m) => (m === "server" ? "device" : "server"))
-          }
-        />
-
         {/* ── URL Input ── */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">

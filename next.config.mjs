@@ -1,27 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "i.ytimg.com",
-      },
-    ],
-  },
-  serverExternalPackages: [
-    "@distube/ytdl-core",
-    "fluent-ffmpeg",
-    "@ffmpeg-installer/ffmpeg",
-    "youtube-dl-exec",   // needed so Next.js doesn't try to bundle the native binary caller
-  ],
-  // Tell Next.js to include the yt-dlp binary in Vercel's output file tracing.
-  // Without this, Vercel Lambda deployments cannot find the binary at runtime
-  // because only files reachable via static import analysis are bundled.
+  // lib/ytdlp.js spawns bin/yt-dlp via child_process, not `require`/`import`,
+  // so Next's automatic file tracer has no static reference to find it. This
+  // config forces it into every API route's serverless function bundle.
+  // Without it: works with `next dev` locally (files are just on disk), but
+  // every request 500s on Vercel with "yt-dlp binary not found" — a totally
+  // silent failure mode unless you go looking for this exact line.
   outputFileTracingIncludes: {
-    "/api/playlist":   ["./bin/**"],
-    "/api/video":      ["./bin/**"],
-    "/api/stream-url": ["./bin/**"],
-    "/api/download":   ["./bin/**"],
+    "/api/**": ["./bin/**"],
   },
 };
 
