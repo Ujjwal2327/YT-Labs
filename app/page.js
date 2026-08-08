@@ -92,8 +92,23 @@ function useCookies() {
   return [cookies, setCookies];
 }
 
+// HTTP header values can't contain raw newlines (or several other control
+// characters) - the Fetch spec rejects them outright with a synchronous
+// "Invalid value" TypeError. A Netscape cookies.txt is inherently
+// multi-line, so it can never go through as-is; base64 gives a value made
+// only of [A-Za-z0-9+/=], which is always a valid header value. Decoded
+// back to text server-side in lib/ytdlp.js's resolveCookies().
+function toBase64Utf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  bytes.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary);
+}
+
 function cookieHeaders(cookies) {
-  return cookies ? { "x-ytdlp-cookies": cookies } : {};
+  return cookies ? { "x-ytdlp-cookies": toBase64Utf8(cookies) } : {};
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
