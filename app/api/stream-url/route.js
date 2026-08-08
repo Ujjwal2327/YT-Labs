@@ -25,21 +25,23 @@ export const maxDuration = 60;
 // NOTE: these caps filter by yt-dlp's `height` field, which is the video's
 // raw vertical pixel dimension. For landscape video that's the expected
 // "1080p"-style constraint. For a portrait Short (e.g. 1080x1920), `height`
-// is actually the LARGER dimension, so a "1080p" cap can end up selecting a
-// lower actual resolution than intended. "highest" (the default and most
-// commonly picked option) isn't affected — it has no height cap at all.
+// is actually the LARGER dimension, so a cap can exclude every format for
+// that video outright rather than just picking a lower resolution. Each
+// tier below ends in an unconstrained `bestvideo+bestaudio/best` for
+// exactly this reason: a slightly-higher-than-requested result in a rare
+// edge case beats a hard failure every time.
 const DEVICE_VIDEO_FORMAT_MAP = {
   highest:
-    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
   "1080p":
-    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
   "720p":
-    "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]",
+    "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
   "480p":
-    "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]",
+    "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best",
   "360p":
-    "bestvideo[height<=360][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]",
-  lowest: "worstvideo+worstaudio/worst",
+    "bestvideo[height<=360][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/bestvideo+bestaudio/best",
+  lowest: "worstvideo+worstaudio/worst/bestvideo+bestaudio/best",
 };
 
 export async function GET(req) {
