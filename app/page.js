@@ -55,6 +55,7 @@ import {
   Settings2,
   ChevronRight,
   Cookie,
+  Smartphone,
 } from "lucide-react";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -141,6 +142,19 @@ function detectUrlType(rawUrl) {
     return null;
   } catch {
     return null;
+  }
+}
+
+// A Short is still just a video underneath (same fetch/download path) - this
+// only affects display (type pill label, thumbnail aspect ratio), so it's
+// kept separate from detectUrlType's "video" result rather than becoming a
+// third urlType value every urlType === "video" check would need to handle.
+function isShortsUrl(rawUrl) {
+  if (!rawUrl?.trim()) return false;
+  try {
+    return new URL(rawUrl.trim()).pathname.startsWith("/shorts/");
+  } catch {
+    return false;
   }
 }
 
@@ -1008,14 +1022,41 @@ function DownloadSettingsModal({
 }
 
 // ── Cookies Modal ────────────────────────────────────────────────────────────
+const COOKIE_EXTENSION = {
+  chrome:
+    "https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc",
+  firefox:
+    "https://addons.mozilla.org/en-US/firefox/addon/get-cookies-txt-locally/",
+};
+
 function CookiesModal({ open, onClose, cookies, onSave }) {
   const [draft, setDraft] = useState(cookies);
+  const [browser, setBrowser] = useState({
+    name: "Chrome",
+    url: COOKIE_EXTENSION.chrome,
+  });
 
   useEffect(() => {
-    if (open) setDraft(cookies);
+    if (!open) return;
+    setDraft(cookies);
+    const isFirefox =
+      typeof navigator !== "undefined" && /Firefox\//.test(navigator.userAgent);
+    setBrowser(
+      isFirefox
+        ? { name: "Firefox", url: COOKIE_EXTENSION.firefox }
+        : { name: "Chrome", url: COOKIE_EXTENSION.chrome }, // covers Chrome/Edge/Brave/Opera too
+    );
   }, [open, cookies]);
 
   if (!open) return null;
+
+  const otherBrowser =
+    browser.name === "Chrome"
+      ? { name: "Firefox", url: COOKIE_EXTENSION.firefox }
+      : {
+          name: "Chrome (also works for Edge/Brave)",
+          url: COOKIE_EXTENSION.chrome,
+        };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1046,30 +1087,79 @@ function CookiesModal({ open, onClose, cookies, onSave }) {
           </button>
         </div>
 
-        <div className="p-5 flex flex-col gap-3">
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            YouTube increasingly blocks downloads from anonymous requests.
-            Pasting your own cookies here fixes that for videos you fetch.
-            They're stored only in this browser and sent only to this site's own
-            server — never anywhere else, never saved on the server past the
-            single request that uses them.
-          </p>
-          <p className="text-xs text-muted-foreground leading-relaxed flex items-start gap-1.5">
-            <Info className="w-3 h-3 shrink-0 mt-0.5" />
-            Use a secondary/throwaway Google account signed into YouTube, not
-            your main one — then export cookies with a browser extension like
-            "Get cookies.txt LOCALLY".
-          </p>
+        <div className="p-5 flex flex-col gap-4">
+          <a
+            href={browser.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 rounded-xl border-2 border-primary/30 bg-primary/5 hover:bg-primary/10 px-4 py-3 transition-colors"
+          >
+            <span className="shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
+              1
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">
+                Install "Get cookies.txt LOCALLY" for {browser.name}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Free, open-source, one click — then come back here
+              </p>
+            </div>
+            <ExternalLink className="w-4 h-4 text-muted-foreground shrink-0" />
+          </a>
+          <a
+            href={otherBrowser.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground hover:text-foreground -mt-2 self-center"
+          >
+            Using {otherBrowser.name} instead? Get it here
+          </a>
+
+          <ol className="flex flex-col gap-2">
+            {[
+              <>
+                Go to{" "}
+                <a
+                  href="https://youtube.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  youtube.com
+                </a>{" "}
+                and sign in (use a secondary account, not your main one)
+              </>,
+              <>
+                Click the extension's icon in your toolbar, then{" "}
+                <strong>Copy</strong>
+              </>,
+              <>Paste it below and hit Save</>,
+            ].map((step, i) => (
+              <li key={i} className="flex items-start gap-2.5">
+                <span className="shrink-0 w-5 h-5 rounded-full bg-muted text-muted-foreground text-xs font-semibold flex items-center justify-center mt-0.5">
+                  {i + 2}
+                </span>
+                <p className="text-sm flex-1 leading-relaxed">{step}</p>
+              </li>
+            ))}
+          </ol>
+
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={
-              "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...\t..."
-            }
-            rows={8}
+            placeholder="Paste the copied cookies here…"
+            rows={6}
             className="w-full rounded-lg border bg-background px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
             spellCheck={false}
           />
+
+          <p className="text-xs text-muted-foreground leading-relaxed flex items-start gap-1.5">
+            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+            Stored only in this browser, sent only to this site's own server,
+            never saved past the single request that uses it.
+          </p>
+
           {cookies && (
             <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5" /> Cookies are currently
@@ -1134,9 +1224,17 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
 
   const isLocked = globallyBusy || effectiveStatus === "downloading";
 
+  const isVertical = video.height && video.width && video.height > video.width;
+
   return (
     <div className="rounded-xl border bg-card overflow-hidden">
-      <div className="relative w-full aspect-video bg-muted overflow-hidden">
+      <div
+        className={`relative bg-muted overflow-hidden ${
+          isVertical
+            ? "w-40 sm:w-48 aspect-[9/16] mx-auto my-4 rounded-lg"
+            : "w-full aspect-video"
+        }`}
+      >
         <img
           src={video.thumbnail}
           alt={video.title}
@@ -1145,6 +1243,11 @@ function VideoCard({ video, onDownload, download, globallyBusy = false }) {
             e.target.style.display = "none";
           }}
         />
+        {isVertical && (
+          <span className="absolute top-2 left-2 bg-black/80 text-white text-xs font-medium px-1.5 py-0.5 rounded flex items-center gap-1">
+            <Smartphone className="w-3 h-3" /> Short
+          </span>
+        )}
         <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs font-mono px-1.5 py-0.5 rounded">
           {video.duration}
         </span>
@@ -1745,7 +1848,9 @@ export default function Home() {
     urlType === "playlist"
       ? { label: "Playlist", icon: List }
       : urlType === "video"
-        ? { label: "Video", icon: Video }
+        ? isShortsUrl(url)
+          ? { label: "Short", icon: Smartphone }
+          : { label: "Video", icon: Video }
         : null;
 
   return (

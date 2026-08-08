@@ -82,6 +82,8 @@ export async function GET(req) {
       title: info.title || "Unknown",
       author: info.uploader || info.channel || "Unknown",
       channelId: info.channel_id || null,
+      width: info.width || null,
+      height: info.height || null,
       duration: formatDuration(info.duration || 0),
       durationSeconds: info.duration || 0,
       thumbnail: bestThumb,

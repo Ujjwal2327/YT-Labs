@@ -22,6 +22,12 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// NOTE: these caps filter by yt-dlp's `height` field, which is the video's
+// raw vertical pixel dimension. For landscape video that's the expected
+// "1080p"-style constraint. For a portrait Short (e.g. 1080x1920), `height`
+// is actually the LARGER dimension, so a "1080p" cap can end up selecting a
+// lower actual resolution than intended. "highest" (the default and most
+// commonly picked option) isn't affected — it has no height cap at all.
 const DEVICE_VIDEO_FORMAT_MAP = {
   highest:
     "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
